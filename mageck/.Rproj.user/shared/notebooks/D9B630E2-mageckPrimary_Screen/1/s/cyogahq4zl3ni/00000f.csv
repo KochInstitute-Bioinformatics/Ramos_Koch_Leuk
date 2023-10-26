@@ -1,0 +1,2 @@
+"0","sgRNAs <- read.xlsx(""../sgRNA_to_Gene_stock_plusPool.xlsx"")"
+"0","sgRNAs.gene <- sgRNAs %>% select(c(""Barcode.Sequence"",""GeneSym"",""Pool""))"

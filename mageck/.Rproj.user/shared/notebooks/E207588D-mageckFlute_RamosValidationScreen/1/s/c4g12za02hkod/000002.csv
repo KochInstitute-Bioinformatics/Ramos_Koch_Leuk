@@ -1,0 +1,7 @@
+"0","all.counts <- read.xlsx(""stockCounts.xlsx"")"
+"0","all.counts <- all.counts %>% dplyr::select(-Gene)"
+"0","rownames(all.counts) <- all.counts[,1]"
+"0","all.counts <- all.counts %>% dplyr::select(-sgRNA)"
+"0","all.ct.l2 <- merge(x=all.counts,y=all.n.l2, by=0, all=TRUE, row.names=Row.names, Row.names=NULL)"
+"0","#all.ct.l2 <- tibble::rownames_to_column(all.ct.l2, ""sgRNA"")"
+"0","#write.xlsx(all.ct.l2, file=""all.ct.l2.xlsx"", overwrite = TRUE, rowNames=TRUE)"

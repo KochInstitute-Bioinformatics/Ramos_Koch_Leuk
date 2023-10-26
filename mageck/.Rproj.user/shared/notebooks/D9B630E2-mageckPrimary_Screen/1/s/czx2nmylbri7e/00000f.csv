@@ -1,0 +1,5 @@
+"0","gdata_obj <- ls(pattern=glob2rx(""*input.gdata""))"
+"0","gdata_obj <- grep(""all"", gdata_obj, invert = TRUE, value = TRUE)"
+"0","for (i in 1:length(gdata_obj)){"
+"0","  print(plot_essentials(get(gdata_obj[i])) + ggtitle(gdata_obj[i]))"
+"0","}"

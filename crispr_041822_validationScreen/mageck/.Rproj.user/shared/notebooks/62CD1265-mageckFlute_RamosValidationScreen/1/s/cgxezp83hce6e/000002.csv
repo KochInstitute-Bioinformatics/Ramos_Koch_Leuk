@@ -1,0 +1,1 @@
+"0","all.n <- read.table(""batch.normalized.txt"", row.names = 1, sep = ""\t"", header = TRUE)"

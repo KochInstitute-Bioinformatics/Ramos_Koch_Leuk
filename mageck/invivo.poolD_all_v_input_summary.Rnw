@@ -1,0 +1,1063 @@
+% This is a template file for Sweave used in MAGeCK
+% Author: Wei Li, Shirley Liu lab
+% Do not modify lines beginning with "#__".
+\documentclass{article}
+
+\usepackage{amsmath}
+\usepackage{amscd}
+\usepackage[tableposition=top]{caption}
+\usepackage{ifthen}
+\usepackage{fullpage}
+\usepackage[utf8]{inputenc}
+
+\begin{document}
+\setkeys{Gin}{width=0.9\textwidth}
+
+\title{MAGeCK Comparison Report}
+\author{Wei Li}
+
+\maketitle
+
+
+\tableofcontents
+
+\section{Summary}
+
+%Function definition
+<<label=funcdef,include=FALSE,echo=FALSE>>=
+genreporttable<-function(comparisons,ngenes,direction,fdr1,fdr5,fdr25){
+  xtb=data.frame(Comparison=comparisons,Genes=ngenes,Selection=direction,FDR1=fdr1,FDR5=fdr5,FDR25=fdr25);
+  colnames(xtb)=c("Comparison","Genes","Selection","FDR1%","FDR5%","FDR25%");
+  return (xtb);
+}
+@
+
+The statistics of comparisons is as indicated in the following table. 
+
+<<label=tab1,echo=FALSE,results=tex>>=
+library(xtable)
+comparisons=c("1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25_vs_0 neg.","1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25_vs_0 pos.");
+ngenes=c(3936,3936);
+direction=c("negative","positive");
+fdr1=c(135,11);
+fdr5=c(223,11);
+fdr25=c(351,11);
+
+cptable=genreporttable(comparisons,ngenes,direction,fdr1,fdr5,fdr25);
+print(xtable(cptable, caption = "Summary of comparisons", label = "tab:one",
+    digits = c(0, 0, 0, 0, 0, 0, 0),
+    table.placement = "tbp",
+    caption.placement = "top"))
+@
+
+The meanings of the columns are as follows.
+
+\begin{itemize}
+\item \textbf{Comparison}: The label for comparisons;
+\item \textbf{Genes}: The number of genes in the library;
+\item \textbf{Selection}: The direction of selection, either positive selection or negative selection;
+\item \textbf{FDR1\%}: The number of genes with FDR $<$ 1\%;
+\item \textbf{FDR5\%}: The number of genes with FDR $<$ 5\%;
+\item \textbf{FDR25\%}: The number of genes with FDR $<$ 25\%;
+\end{itemize}
+
+The following figures show:
+
+\begin{itemize}
+\item Individual sgRNA read counts of selected genes in selected samples; 
+\item The distribution of RRA scores and p values of all genes; and
+\item The RRA scores and p values of selected genes.
+\end{itemize}
+
+
+\newpage\section{Comparison results of 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25 vs 0 neg.}
+
+The following figure shows the distribution of RRA score in the comparison 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25 vs 0 neg., and the RRA scores of 10 genes.
+
+<<echo=FALSE>>=
+gstable=read.table('invivo.poolD_all_v_input.gene_summary.txt',header=T)
+@
+%
+
+
+<<fig=TRUE,echo=FALSE,width=4.5,height=4.5>>=# 
+#
+# parameters
+# Do not modify the variables beginning with "__"
+
+# gstablename='__GENE_SUMMARY_FILE__'
+startindex=3
+# outputfile='__OUTPUT_FILE__'
+targetgenelist=c("Mtus1","2610008E11Rik","Cfap206","Sytl1","Cobl","Gm46139","Dcaf15","Gm14743_Obp1b","Tfcp2l1","Hectd4")
+# samplelabel=sub('.\w+.\w+$','',colnames(gstable)[startindex]);
+samplelabel='1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25_vs_0 neg.'
+
+
+# You need to write some codes in front of this code:
+# gstable=read.table(gstablename,header=T)
+# pdf(file=outputfile,width=6,height=6)
+
+
+# set up color using RColorBrewer
+#library(RColorBrewer)
+#colors <- brewer.pal(length(targetgenelist), "Set1")
+
+colors=c( "#E41A1C", "#377EB8", "#4DAF4A", "#984EA3", "#FF7F00",  "#A65628", "#F781BF",
+          "#999999", "#66C2A5", "#FC8D62", "#8DA0CB", "#E78AC3", "#A6D854", "#FFD92F", "#E5C494", "#B3B3B3", 
+          "#8DD3C7", "#FFFFB3", "#BEBADA", "#FB8072", "#80B1D3", "#FDB462", "#B3DE69", "#FCCDE5",
+          "#D9D9D9", "#BC80BD", "#CCEBC5", "#FFED6F")
+
+######
+# function definition
+
+plotrankedvalues<-function(val, tglist, ...){
+  
+  plot(val,log='y',ylim=c(max(val),min(val)),type='l',lwd=2, ...)
+  if(length(tglist)>0){
+    for(i in 1:length(tglist)){
+      targetgene=tglist[i];
+      tx=which(names(val)==targetgene);ty=val[targetgene];
+      points(tx,ty,col=colors[(i %% length(colors)) ],cex=2,pch=20)
+      # text(tx+50,ty,targetgene,col=colors[i])
+    }
+    legend('topright',tglist,pch=20,pt.cex = 2,cex=1,col=colors)
+  }
+}
+
+
+
+plotrandvalues<-function(val,targetgenelist, ...){
+  # choose the one with the best distance distribution
+  
+  mindiffvalue=0;
+  randval=val;
+  for(i in 1:20){
+    randval0=sample(val)
+    vindex=sort(which(names(randval0) %in% targetgenelist))
+    if(max(vindex)>0.9*length(val)){
+      # print('pass...')
+      next;
+    }
+    mindiffind=min(diff(vindex));
+    if (mindiffind > mindiffvalue){
+      mindiffvalue=mindiffind;
+      randval=randval0;
+      # print(paste('Diff: ',mindiffvalue))
+    }
+  }
+  plot(randval,log='y',ylim=c(max(randval),min(randval)),pch=20,col='grey', ...)
+  
+  if(length(targetgenelist)>0){
+    for(i in 1:length(targetgenelist)){
+      targetgene=targetgenelist[i];
+      tx=which(names(randval)==targetgene);ty=randval[targetgene];
+      points(tx,ty,col=colors[(i %% length(colors)) ],cex=2,pch=20)
+      text(tx+50,ty,targetgene,col=colors[i])
+    }
+  }
+  
+}
+
+
+
+
+# set.seed(1235)
+
+
+
+pvec=gstable[,startindex]
+names(pvec)=gstable[,'id']
+pvec=sort(pvec);
+
+plotrankedvalues(pvec,targetgenelist,xlab='Genes',ylab='RRA score',main=paste('Distribution of RRA scores in \n',samplelabel))
+
+# plotrandvalues(pvec,targetgenelist,xlab='Genes',ylab='RRA score',main=paste('Distribution of RRA scores in \n',samplelabel))
+
+
+pvec=gstable[,startindex+1]
+names(pvec)=gstable[,'id']
+pvec=sort(pvec);
+
+plotrankedvalues(pvec,targetgenelist,xlab='Genes',ylab='p value',main=paste('Distribution of p values in \n',samplelabel))
+
+# plotrandvalues(pvec,targetgenelist,xlab='Genes',ylab='p value',main=paste('Distribution of p values in \n',samplelabel))
+
+
+
+# you need to write after this code:
+# dev.off()
+
+
+
+
+@
+%%
+\clearpage
+\newpage
+The following figures show the distribution of sgRNA read counts (normalized) of selected genes in selected samples.
+%
+
+
+<<fig=TRUE,echo=FALSE,width=4.5,height=4.5>>=
+par(mfrow=c(2,2));
+
+# parameters
+# Do not modify the variables beginning with "__"
+targetmat=list(c(6.688822439234565,3.277709087220778,0.0,0.0,1.6655255757251484,0.0,0.0,11.009703777937704,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.8549632145061921,6.612835753266897,0.5460616516528847,0.0,2.432887775987159,0.0,0.0,0.0),c(4.815952156248887,0.0,0.0,7.205884232145088,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,6.507485316924588,0.0,0.0,62.569138380675696,0.0,0.0,2.564889643518576,0.0,3.276369909917308,0.0,0.0,0.0,0.0,0.0),c(3.7457405659713565,19.666254523324668,0.0,0.0,0.0,1.3821872573521752,1.1244445300967192,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,2.5665048095420526,0.0,0.0,0.0,5.460616516528846,12.148574664986754,0.0,0.0,8.961614957259847,10.468761636473152),c(3.478187668401974,1.638854543610389,4.687482419481495,3.0882360994907523,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,4.86959390509809,0.0,1.896034496384112,0.0,4.574434492138548,15.389337861111457,0.0,0.0,0.0,0.0,0.0,2.240403739314962,0.0))
+targetgene="Mtus1"
+collabel=c("In.vivo.input.Pool.D..25.32._1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1870_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1871_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1872_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1873_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1874_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1883_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1884_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1885_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1886_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1876_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1877_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1878_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1879_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1880_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1881_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1870_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1871_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1872_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1873_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1874_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1883_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1884_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1885_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1886_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1887_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430")
+
+# set up color using RColorBrewer
+#library(RColorBrewer)
+#colors <- brewer.pal(length(targetgenelist), "Set1")
+
+colors=c( "#E41A1C", "#377EB8", "#4DAF4A", "#984EA3", "#FF7F00",  "#A65628", "#F781BF",
+          "#999999", "#66C2A5", "#FC8D62", "#8DA0CB", "#E78AC3", "#A6D854", "#FFD92F", "#E5C494", "#B3B3B3", 
+          "#8DD3C7", "#FFFFB3", "#BEBADA", "#FB8072", "#80B1D3", "#FDB462", "#B3DE69", "#FCCDE5",
+          "#D9D9D9", "#BC80BD", "#CCEBC5", "#FFED6F")
+
+
+## code
+
+targetmatvec=unlist(targetmat)+1
+yrange=range(targetmatvec[targetmatvec>0]);
+# yrange[1]=1; # set the minimum value to 1
+for(i in 1:length(targetmat)){
+  vali=targetmat[[i]]+1;
+  if(i==1){
+    plot(1:length(vali),vali,type='b',las=1,pch=20,main=paste('sgRNAs in',targetgene),ylab='Read counts',xlab='Samples',xlim=c(0.7,length(vali)+0.3),ylim = yrange,col=colors[(i %% length(colors))],xaxt='n',log='y')
+    axis(1,at=1:length(vali),labels=(collabel),las=2)
+    # lines(0:100,rep(1,101),col='black');
+  }else{
+    lines(1:length(vali),vali,type='b',pch=20,col=colors[(i %% length(colors))])
+  }
+}
+
+
+
+# parameters
+# Do not modify the variables beginning with "__"
+targetmat=list(c(8.561692722220243,0.8194272718051945,0.0,0.0,0.8327627878625742,0.6910936286760876,131.56001002131615,0.0,0.0,0.0,0.0,7.2747817266885795,0.0,0.0,7.387087362943677,0.0,2.5665048095420526,0.0,1.7099264290123841,2.404667546642508,6.552739819834616,46.569536215782556,0.0,0.0,0.0,0.0),c(3.478187668401974,0.0,0.0,2.058824066327168,0.0,2.7643745147043504,0.0,6.11650209885428,7.610579497353342,21.498829855984656,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,9.28304807809904,0.0,2.432887775987159,0.7622483735751477,2.9872049857532827,0.0),c(4.013293463540739,0.0,7.031223629222243,0.0,0.0,2.0732808860282628,0.0,0.0,1.5221158994706685,10.749414927992328,0.0,0.0,0.0,0.0,0.0,0.0,2.5665048095420526,3.5578934938855373,0.0,0.0,2.730308258264423,0.0,0.0,0.0,5.227608725068245,0.0),c(6.688822439234565,0.8194272718051945,0.0,0.0,0.0,0.0,0.0,1.223300419770856,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,7.699514428626157,0.0,9.404595359568113,0.0,0.0,7.086668554575606,10.542513695944356,0.0,4.480807478629924,0.0))
+targetgene="2610008E11Rik"
+collabel=c("In.vivo.input.Pool.D..25.32._1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1870_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1871_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1872_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1873_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1874_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1883_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1884_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1885_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1886_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1876_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1877_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1878_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1879_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1880_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1881_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1870_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1871_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1872_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1873_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1874_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1883_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1884_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1885_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1886_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1887_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430")
+
+# set up color using RColorBrewer
+#library(RColorBrewer)
+#colors <- brewer.pal(length(targetgenelist), "Set1")
+
+colors=c( "#E41A1C", "#377EB8", "#4DAF4A", "#984EA3", "#FF7F00",  "#A65628", "#F781BF",
+          "#999999", "#66C2A5", "#FC8D62", "#8DA0CB", "#E78AC3", "#A6D854", "#FFD92F", "#E5C494", "#B3B3B3", 
+          "#8DD3C7", "#FFFFB3", "#BEBADA", "#FB8072", "#80B1D3", "#FDB462", "#B3DE69", "#FCCDE5",
+          "#D9D9D9", "#BC80BD", "#CCEBC5", "#FFED6F")
+
+
+## code
+
+targetmatvec=unlist(targetmat)+1
+yrange=range(targetmatvec[targetmatvec>0]);
+# yrange[1]=1; # set the minimum value to 1
+for(i in 1:length(targetmat)){
+  vali=targetmat[[i]]+1;
+  if(i==1){
+    plot(1:length(vali),vali,type='b',las=1,pch=20,main=paste('sgRNAs in',targetgene),ylab='Read counts',xlab='Samples',xlim=c(0.7,length(vali)+0.3),ylim = yrange,col=colors[(i %% length(colors))],xaxt='n',log='y')
+    axis(1,at=1:length(vali),labels=(collabel),las=2)
+    # lines(0:100,rep(1,101),col='black');
+  }else{
+    lines(1:length(vali),vali,type='b',pch=20,col=colors[(i %% length(colors))])
+  }
+}
+
+
+
+# parameters
+# Do not modify the variables beginning with "__"
+targetmat=list(c(4.548399258679504,5.735990902636361,0.0,10.294120331635842,0.0,0.0,0.0,11.009703777937704,0.0,0.0,0.0,0.0,0.0,0.0,0.0,1.896034496384112,12.832524047710264,0.0,5.984742501543344,6.01166886660627,1.0921233033057693,0.0,0.0,4.5734902414508865,5.9744099715065655,2.2433060649585324),c(6.956375336803948,0.0,0.0,0.0,4.996576727175445,3.455468143380438,49.47555932425564,0.0,0.0,0.0,17.752642656921097,0.0,0.0,0.0,144.0482035774017,0.0,0.0,0.0,5.984742501543344,9.618670186570032,12.013356336363463,33.40858032871357,0.0,0.0,8.214813710821527,2.2433060649585324),c(3.2106347708325913,0.0,0.0,0.0,0.0,4.837655400732613,0.0,0.0,65.45098367723874,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,12.624504619873168,19.112157807850963,0.0,0.0,13.720470724352658,0.0,0.0),c(3.7457405659713565,0.0,0.0,0.0,0.0,0.0,1.1244445300967192,0.0,0.0,0.0,0.0,0.0,22.776198609236058,0.0,0.0,0.0,0.0,0.0,1.7099264290123841,0.0,1.638184954958654,1.0123812220822295,10.542513695944356,0.0,0.0,0.0))
+targetgene="Cfap206"
+collabel=c("In.vivo.input.Pool.D..25.32._1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1870_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1871_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1872_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1873_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1874_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1883_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1884_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1885_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1886_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1876_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1877_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1878_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1879_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1880_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1881_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1870_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1871_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1872_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1873_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1874_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1883_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1884_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1885_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1886_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1887_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430")
+
+# set up color using RColorBrewer
+#library(RColorBrewer)
+#colors <- brewer.pal(length(targetgenelist), "Set1")
+
+colors=c( "#E41A1C", "#377EB8", "#4DAF4A", "#984EA3", "#FF7F00",  "#A65628", "#F781BF",
+          "#999999", "#66C2A5", "#FC8D62", "#8DA0CB", "#E78AC3", "#A6D854", "#FFD92F", "#E5C494", "#B3B3B3", 
+          "#8DD3C7", "#FFFFB3", "#BEBADA", "#FB8072", "#80B1D3", "#FDB462", "#B3DE69", "#FCCDE5",
+          "#D9D9D9", "#BC80BD", "#CCEBC5", "#FFED6F")
+
+
+## code
+
+targetmatvec=unlist(targetmat)+1
+yrange=range(targetmatvec[targetmatvec>0]);
+# yrange[1]=1; # set the minimum value to 1
+for(i in 1:length(targetmat)){
+  vali=targetmat[[i]]+1;
+  if(i==1){
+    plot(1:length(vali),vali,type='b',las=1,pch=20,main=paste('sgRNAs in',targetgene),ylab='Read counts',xlab='Samples',xlim=c(0.7,length(vali)+0.3),ylim = yrange,col=colors[(i %% length(colors))],xaxt='n',log='y')
+    axis(1,at=1:length(vali),labels=(collabel),las=2)
+    # lines(0:100,rep(1,101),col='black');
+  }else{
+    lines(1:length(vali),vali,type='b',pch=20,col=colors[(i %% length(colors))])
+  }
+}
+
+
+
+# parameters
+# Do not modify the variables beginning with "__"
+targetmat=list(c(2.675528975693826,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,1.524811497379516,0.0,0.0,0.5460616516528847,0.0,0.0,0.0,0.0,0.0),c(3.7457405659713565,0.0,0.0,0.0,0.0,6.219842658084788,0.0,24.46600839541712,1.5221158994706685,0.0,11.835095104614066,65.47303554019722,3.253742658462294,0.0,0.0,0.0,0.0,0.0,0.0,8.416336413248779,7.644863123140386,0.0,14.597326655922954,10.67147723005207,0.0,0.0),c(2.9430818732632087,0.0,16.40618846818523,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,3.5578934938855373,0.0,0.0,0.0,0.0,0.0,0.0,9.70841620369817,0.0),c(3.478187668401974,2.4582818154155834,1.562494139827165,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,7.699514428626157,13.723303476415644,6.8397057160495365,0.0,0.0,0.0,7.298663327961477,22.867451207254433,2.9872049857532827,9.72099294815364))
+targetgene="Sytl1"
+collabel=c("In.vivo.input.Pool.D..25.32._1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1870_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1871_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1872_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1873_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1874_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1883_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1884_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1885_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1886_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1876_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1877_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1878_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1879_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1880_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1881_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1870_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1871_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1872_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1873_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1874_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1883_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1884_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1885_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1886_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1887_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430")
+
+# set up color using RColorBrewer
+#library(RColorBrewer)
+#colors <- brewer.pal(length(targetgenelist), "Set1")
+
+colors=c( "#E41A1C", "#377EB8", "#4DAF4A", "#984EA3", "#FF7F00",  "#A65628", "#F781BF",
+          "#999999", "#66C2A5", "#FC8D62", "#8DA0CB", "#E78AC3", "#A6D854", "#FFD92F", "#E5C494", "#B3B3B3", 
+          "#8DD3C7", "#FFFFB3", "#BEBADA", "#FB8072", "#80B1D3", "#FDB462", "#B3DE69", "#FCCDE5",
+          "#D9D9D9", "#BC80BD", "#CCEBC5", "#FFED6F")
+
+
+## code
+
+targetmatvec=unlist(targetmat)+1
+yrange=range(targetmatvec[targetmatvec>0]);
+# yrange[1]=1; # set the minimum value to 1
+for(i in 1:length(targetmat)){
+  vali=targetmat[[i]]+1;
+  if(i==1){
+    plot(1:length(vali),vali,type='b',las=1,pch=20,main=paste('sgRNAs in',targetgene),ylab='Read counts',xlab='Samples',xlim=c(0.7,length(vali)+0.3),ylim = yrange,col=colors[(i %% length(colors))],xaxt='n',log='y')
+    axis(1,at=1:length(vali),labels=(collabel),las=2)
+    # lines(0:100,rep(1,101),col='black');
+  }else{
+    lines(1:length(vali),vali,type='b',pch=20,col=colors[(i %% length(colors))])
+  }
+}
+
+
+
+par(mfrow=c(1,1));
+@
+%
+
+
+<<fig=TRUE,echo=FALSE,width=4.5,height=4.5>>=
+par(mfrow=c(2,2));
+
+# parameters
+# Do not modify the variables beginning with "__"
+targetmat=list(c(2.675528975693826,3.277709087220778,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,36.64066572765603),c(2.9430818732632087,0.0,0.0,0.0,0.0,0.0,1.1244445300967192,0.0,0.0,25.40770801161823,0.0,0.0,0.0,0.0,0.0,0.0,0.0,1.524811497379516,0.0,0.0,0.0,0.0,0.0,0.0,5.9744099715065655,0.0),c(4.013293463540739,4.097136359025972,0.0,0.0,16.655255757251485,0.6910936286760876,0.0,2.446600839541712,0.0,8.794975850175542,0.0,0.0,0.0,0.0,0.0,0.0,12.832524047710264,0.0,0.0,1.803500659981881,12.559417988016348,3.0371436662466884,0.8109625919957196,9.90922885647692,1.4936024928766414,0.0),c(2.9430818732632087,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,9.699708968918106,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0))
+targetgene="Cobl"
+collabel=c("In.vivo.input.Pool.D..25.32._1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1870_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1871_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1872_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1873_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1874_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1883_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1884_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1885_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1886_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1876_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1877_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1878_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1879_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1880_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1881_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1870_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1871_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1872_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1873_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1874_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1883_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1884_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1885_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1886_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1887_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430")
+
+# set up color using RColorBrewer
+#library(RColorBrewer)
+#colors <- brewer.pal(length(targetgenelist), "Set1")
+
+colors=c( "#E41A1C", "#377EB8", "#4DAF4A", "#984EA3", "#FF7F00",  "#A65628", "#F781BF",
+          "#999999", "#66C2A5", "#FC8D62", "#8DA0CB", "#E78AC3", "#A6D854", "#FFD92F", "#E5C494", "#B3B3B3", 
+          "#8DD3C7", "#FFFFB3", "#BEBADA", "#FB8072", "#80B1D3", "#FDB462", "#B3DE69", "#FCCDE5",
+          "#D9D9D9", "#BC80BD", "#CCEBC5", "#FFED6F")
+
+
+## code
+
+targetmatvec=unlist(targetmat)+1
+yrange=range(targetmatvec[targetmatvec>0]);
+# yrange[1]=1; # set the minimum value to 1
+for(i in 1:length(targetmat)){
+  vali=targetmat[[i]]+1;
+  if(i==1){
+    plot(1:length(vali),vali,type='b',las=1,pch=20,main=paste('sgRNAs in',targetgene),ylab='Read counts',xlab='Samples',xlim=c(0.7,length(vali)+0.3),ylim = yrange,col=colors[(i %% length(colors))],xaxt='n',log='y')
+    axis(1,at=1:length(vali),labels=(collabel),las=2)
+    # lines(0:100,rep(1,101),col='black');
+  }else{
+    lines(1:length(vali),vali,type='b',pch=20,col=colors[(i %% length(colors))])
+  }
+}
+
+
+
+# parameters
+# Do not modify the variables beginning with "__"
+targetmat=list(c(3.478187668401974,21.305109066935056,2.3437412097407475,0.0,0.8327627878625742,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,5.133009619084105,0.5082704991265053,0.0,8.416336413248779,0.0,0.0,0.0,0.0,4.480807478629924,0.0),c(2.675528975693826,0.0,0.0,0.0,1.6655255757251484,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,9.657139483403602,0.8549632145061921,5.410501979945643,0.0,8.099049776657836,5.676738143970037,0.0,9.70841620369817,0.0),c(2.9430818732632087,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,2.9587737761535164,0.0,0.0,0.0,22.16126208883103,1.896034496384112,0.0,0.0,0.0,0.0,0.0,8.099049776657836,0.0,0.7622483735751477,0.0,0.0),c(5.08350505381827,0.0,0.0,8.235296265308673,0.0,0.6910936286760876,1.1244445300967192,0.0,0.0,0.0,0.0,12.124636211147632,0.0,0.0,203.14490248095112,0.0,0.0,0.0,0.8549632145061921,0.0,4.914554864875962,0.0,2.432887775987159,0.7622483735751477,7.468012464383207,29.910747532780434))
+targetgene="Gm46139"
+collabel=c("In.vivo.input.Pool.D..25.32._1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1870_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1871_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1872_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1873_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1874_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1883_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1884_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1885_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1886_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1876_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1877_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1878_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1879_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1880_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1881_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1870_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1871_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1872_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1873_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1874_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1883_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1884_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1885_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1886_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1887_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430")
+
+# set up color using RColorBrewer
+#library(RColorBrewer)
+#colors <- brewer.pal(length(targetgenelist), "Set1")
+
+colors=c( "#E41A1C", "#377EB8", "#4DAF4A", "#984EA3", "#FF7F00",  "#A65628", "#F781BF",
+          "#999999", "#66C2A5", "#FC8D62", "#8DA0CB", "#E78AC3", "#A6D854", "#FFD92F", "#E5C494", "#B3B3B3", 
+          "#8DD3C7", "#FFFFB3", "#BEBADA", "#FB8072", "#80B1D3", "#FDB462", "#B3DE69", "#FCCDE5",
+          "#D9D9D9", "#BC80BD", "#CCEBC5", "#FFED6F")
+
+
+## code
+
+targetmatvec=unlist(targetmat)+1
+yrange=range(targetmatvec[targetmatvec>0]);
+# yrange[1]=1; # set the minimum value to 1
+for(i in 1:length(targetmat)){
+  vali=targetmat[[i]]+1;
+  if(i==1){
+    plot(1:length(vali),vali,type='b',las=1,pch=20,main=paste('sgRNAs in',targetgene),ylab='Read counts',xlab='Samples',xlim=c(0.7,length(vali)+0.3),ylim = yrange,col=colors[(i %% length(colors))],xaxt='n',log='y')
+    axis(1,at=1:length(vali),labels=(collabel),las=2)
+    # lines(0:100,rep(1,101),col='black');
+  }else{
+    lines(1:length(vali),vali,type='b',pch=20,col=colors[(i %% length(colors))])
+  }
+}
+
+
+
+# parameters
+# Do not modify the variables beginning with "__"
+targetmat=list(c(5.351057951387652,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.5082704991265053,3.4198528580247682,7.214002639927524,0.0,0.0,0.0,0.0,0.7468012464383207,0.0),c(0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0),c(4.013293463540739,0.0,0.0,12.35294439796301,0.0,2.0732808860282628,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,11.114521788580497,1.803500659981881,2.1842466066115387,0.0,8.109625919957196,20.580706086528988,0.0,0.0),c(4.013293463540739,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,2.5665048095420526,0.0,13.679411432099073,0.0,0.0,0.0,0.0,0.0,0.0,0.0))
+targetgene="Dcaf15"
+collabel=c("In.vivo.input.Pool.D..25.32._1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1870_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1871_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1872_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1873_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1874_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1883_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1884_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1885_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1886_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1876_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1877_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1878_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1879_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1880_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1881_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1870_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1871_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1872_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1873_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1874_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1883_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1884_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1885_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1886_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1887_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430")
+
+# set up color using RColorBrewer
+#library(RColorBrewer)
+#colors <- brewer.pal(length(targetgenelist), "Set1")
+
+colors=c( "#E41A1C", "#377EB8", "#4DAF4A", "#984EA3", "#FF7F00",  "#A65628", "#F781BF",
+          "#999999", "#66C2A5", "#FC8D62", "#8DA0CB", "#E78AC3", "#A6D854", "#FFD92F", "#E5C494", "#B3B3B3", 
+          "#8DD3C7", "#FFFFB3", "#BEBADA", "#FB8072", "#80B1D3", "#FDB462", "#B3DE69", "#FCCDE5",
+          "#D9D9D9", "#BC80BD", "#CCEBC5", "#FFED6F")
+
+
+## code
+
+targetmatvec=unlist(targetmat)+1
+yrange=range(targetmatvec[targetmatvec>0]);
+# yrange[1]=1; # set the minimum value to 1
+for(i in 1:length(targetmat)){
+  vali=targetmat[[i]]+1;
+  if(i==1){
+    plot(1:length(vali),vali,type='b',las=1,pch=20,main=paste('sgRNAs in',targetgene),ylab='Read counts',xlab='Samples',xlim=c(0.7,length(vali)+0.3),ylim = yrange,col=colors[(i %% length(colors))],xaxt='n',log='y')
+    axis(1,at=1:length(vali),labels=(collabel),las=2)
+    # lines(0:100,rep(1,101),col='black');
+  }else{
+    lines(1:length(vali),vali,type='b',pch=20,col=colors[(i %% length(colors))])
+  }
+}
+
+
+
+# parameters
+# Do not modify the variables beginning with "__"
+targetmat=list(c(3.478187668401974,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,2.9587737761535164,0.0,0.0,0.0,0.0,0.0,0.0,3.049622994759032,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0),c(4.013293463540739,0.0,0.0,5.147060165817921,0.0,0.0,0.0,39.14561343266739,0.0,0.0,0.0,0.0,0.0,90.89908622849768,0.0,0.0,0.0,0.0,5.129779287037152,1.202333773321254,0.0,12.148574664986754,55.956418847704654,0.0,14.189223682328093,0.0),c(2.4079760781244435,0.8194272718051945,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,7.2747817266885795,8.134356646155736,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0),c(2.9430818732632087,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,3.253742658462294,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0))
+targetgene="Gm14743_Obp1b"
+collabel=c("In.vivo.input.Pool.D..25.32._1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1870_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1871_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1872_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1873_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1874_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1883_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1884_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1885_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1886_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1876_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1877_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1878_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1879_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1880_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1881_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1870_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1871_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1872_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1873_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1874_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1883_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1884_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1885_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1886_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1887_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430")
+
+# set up color using RColorBrewer
+#library(RColorBrewer)
+#colors <- brewer.pal(length(targetgenelist), "Set1")
+
+colors=c( "#E41A1C", "#377EB8", "#4DAF4A", "#984EA3", "#FF7F00",  "#A65628", "#F781BF",
+          "#999999", "#66C2A5", "#FC8D62", "#8DA0CB", "#E78AC3", "#A6D854", "#FFD92F", "#E5C494", "#B3B3B3", 
+          "#8DD3C7", "#FFFFB3", "#BEBADA", "#FB8072", "#80B1D3", "#FDB462", "#B3DE69", "#FCCDE5",
+          "#D9D9D9", "#BC80BD", "#CCEBC5", "#FFED6F")
+
+
+## code
+
+targetmatvec=unlist(targetmat)+1
+yrange=range(targetmatvec[targetmatvec>0]);
+# yrange[1]=1; # set the minimum value to 1
+for(i in 1:length(targetmat)){
+  vali=targetmat[[i]]+1;
+  if(i==1){
+    plot(1:length(vali),vali,type='b',las=1,pch=20,main=paste('sgRNAs in',targetgene),ylab='Read counts',xlab='Samples',xlim=c(0.7,length(vali)+0.3),ylim = yrange,col=colors[(i %% length(colors))],xaxt='n',log='y')
+    axis(1,at=1:length(vali),labels=(collabel),las=2)
+    # lines(0:100,rep(1,101),col='black');
+  }else{
+    lines(1:length(vali),vali,type='b',pch=20,col=colors[(i %% length(colors))])
+  }
+}
+
+
+
+par(mfrow=c(1,1));
+@
+%
+
+
+<<fig=TRUE,echo=FALSE,width=4.5,height=4.5>>=
+par(mfrow=c(2,2));
+
+# parameters
+# Do not modify the variables beginning with "__"
+targetmat=list(c(2.4079760781244435,0.0,0.0,0.0,12.491441817938613,2.7643745147043504,2.2488890601934384,0.0,0.0,2.9316586167251804,2.9587737761535164,0.0,0.0,0.0,0.0,0.0,5.133009619084105,0.0,0.0,2.404667546642508,5.460616516528846,6.074287332493377,19.463102207897272,0.0,0.7468012464383207,0.0),c(4.280846361110122,0.0,0.0,39.1176572602162,0.0,0.0,2.2488890601934384,0.0,0.0,0.9772195389083934,0.0,0.0,0.0,0.0,0.0,0.0,0.0,4.066163993012043,10.259558574074305,9.017503299909405,0.0,0.0,0.0,2.2867451207254432,19.41683240739634,0.7477686883195108),c(5.351057951387652,0.0,4.687482419481495,0.0,0.0,0.0,0.0,0.0,50.22982468253206,0.0,0.0,0.0,0.0,126.60944153255035,0.0,0.0,10.26601923816821,0.5082704991265053,0.8549632145061921,1.202333773321254,0.0,0.0,12.975401471931514,27.440941448705317,0.0,18.69421720798777),c(3.2106347708325913,0.0,7.812470699135825,0.0,0.0,0.0,0.0,0.0,27.398086190472032,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,8.64059848515059,0.0,0.0,0.0,0.0,0.0,1.5244967471502955,0.0,0.0))
+targetgene="Tfcp2l1"
+collabel=c("In.vivo.input.Pool.D..25.32._1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1870_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1871_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1872_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1873_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1874_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1883_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1884_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1885_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1886_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1876_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1877_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1878_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1879_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1880_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1881_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1870_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1871_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1872_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1873_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1874_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1883_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1884_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1885_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1886_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1887_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430")
+
+# set up color using RColorBrewer
+#library(RColorBrewer)
+#colors <- brewer.pal(length(targetgenelist), "Set1")
+
+colors=c( "#E41A1C", "#377EB8", "#4DAF4A", "#984EA3", "#FF7F00",  "#A65628", "#F781BF",
+          "#999999", "#66C2A5", "#FC8D62", "#8DA0CB", "#E78AC3", "#A6D854", "#FFD92F", "#E5C494", "#B3B3B3", 
+          "#8DD3C7", "#FFFFB3", "#BEBADA", "#FB8072", "#80B1D3", "#FDB462", "#B3DE69", "#FCCDE5",
+          "#D9D9D9", "#BC80BD", "#CCEBC5", "#FFED6F")
+
+
+## code
+
+targetmatvec=unlist(targetmat)+1
+yrange=range(targetmatvec[targetmatvec>0]);
+# yrange[1]=1; # set the minimum value to 1
+for(i in 1:length(targetmat)){
+  vali=targetmat[[i]]+1;
+  if(i==1){
+    plot(1:length(vali),vali,type='b',las=1,pch=20,main=paste('sgRNAs in',targetgene),ylab='Read counts',xlab='Samples',xlim=c(0.7,length(vali)+0.3),ylim = yrange,col=colors[(i %% length(colors))],xaxt='n',log='y')
+    axis(1,at=1:length(vali),labels=(collabel),las=2)
+    # lines(0:100,rep(1,101),col='black');
+  }else{
+    lines(1:length(vali),vali,type='b',pch=20,col=colors[(i %% length(colors))])
+  }
+}
+
+
+
+# parameters
+# Do not modify the variables beginning with "__"
+targetmat=list(c(2.4079760781244435,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.5460616516528847,0.0,0.0,0.0,0.0,0.0),c(3.7457405659713565,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,228.66937210456405,142.02114125536878,0.0,86.2241804492508,4.86959390509809,0.0,0.0,0.0,2.541352495632527,5.129779287037152,19.237340373140064,0.0,0.0,0.0,0.0,13.442422435889773,0.0),c(3.7457405659713565,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,172.4483608985016,0.0,0.0,92.90569032282148,0.0,0.0,15.389337861111457,0.0,0.0,0.0,0.0,32.776680063731355,0.0,0.0),c(5.351057951387652,0.0,4.687482419481495,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,5.133009619084105,17.28119697030118,1.7099264290123841,0.0,1.638184954958654,0.0,0.0,0.0,10.45521745013649,0.0))
+targetgene="Hectd4"
+collabel=c("In.vivo.input.Pool.D..25.32._1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1870_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1871_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1872_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1873_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1874_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1883_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1884_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1885_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1886_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1876_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1877_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1878_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1879_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1880_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1881_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1870_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1871_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1872_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1873_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1874_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1883_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1884_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1885_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1886_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1887_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430")
+
+# set up color using RColorBrewer
+#library(RColorBrewer)
+#colors <- brewer.pal(length(targetgenelist), "Set1")
+
+colors=c( "#E41A1C", "#377EB8", "#4DAF4A", "#984EA3", "#FF7F00",  "#A65628", "#F781BF",
+          "#999999", "#66C2A5", "#FC8D62", "#8DA0CB", "#E78AC3", "#A6D854", "#FFD92F", "#E5C494", "#B3B3B3", 
+          "#8DD3C7", "#FFFFB3", "#BEBADA", "#FB8072", "#80B1D3", "#FDB462", "#B3DE69", "#FCCDE5",
+          "#D9D9D9", "#BC80BD", "#CCEBC5", "#FFED6F")
+
+
+## code
+
+targetmatvec=unlist(targetmat)+1
+yrange=range(targetmatvec[targetmatvec>0]);
+# yrange[1]=1; # set the minimum value to 1
+for(i in 1:length(targetmat)){
+  vali=targetmat[[i]]+1;
+  if(i==1){
+    plot(1:length(vali),vali,type='b',las=1,pch=20,main=paste('sgRNAs in',targetgene),ylab='Read counts',xlab='Samples',xlim=c(0.7,length(vali)+0.3),ylim = yrange,col=colors[(i %% length(colors))],xaxt='n',log='y')
+    axis(1,at=1:length(vali),labels=(collabel),las=2)
+    # lines(0:100,rep(1,101),col='black');
+  }else{
+    lines(1:length(vali),vali,type='b',pch=20,col=colors[(i %% length(colors))])
+  }
+}
+
+
+
+par(mfrow=c(1,1));
+@
+
+\newpage\section{Comparison results of 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25 vs 0 pos.}
+
+The following figure shows the distribution of RRA score in the comparison 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25 vs 0 pos., and the RRA scores of 10 genes.
+
+<<echo=FALSE>>=
+gstable=read.table('invivo.poolD_all_v_input.gene_summary.txt',header=T)
+@
+%
+
+
+<<fig=TRUE,echo=FALSE,width=4.5,height=4.5>>=# 
+#
+# parameters
+# Do not modify the variables beginning with "__"
+
+# gstablename='__GENE_SUMMARY_FILE__'
+startindex=9
+# outputfile='__OUTPUT_FILE__'
+targetgenelist=c("Acnat1","Pou2af1","Arhgap30","Btbd9","Ccdc32","Zfp668","Kctd13","Tmsb15b2_Tmsb15l","Ints14","Adgrg1")
+# samplelabel=sub('.\w+.\w+$','',colnames(gstable)[startindex]);
+samplelabel='1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25_vs_0 pos.'
+
+
+# You need to write some codes in front of this code:
+# gstable=read.table(gstablename,header=T)
+# pdf(file=outputfile,width=6,height=6)
+
+
+# set up color using RColorBrewer
+#library(RColorBrewer)
+#colors <- brewer.pal(length(targetgenelist), "Set1")
+
+colors=c( "#E41A1C", "#377EB8", "#4DAF4A", "#984EA3", "#FF7F00",  "#A65628", "#F781BF",
+          "#999999", "#66C2A5", "#FC8D62", "#8DA0CB", "#E78AC3", "#A6D854", "#FFD92F", "#E5C494", "#B3B3B3", 
+          "#8DD3C7", "#FFFFB3", "#BEBADA", "#FB8072", "#80B1D3", "#FDB462", "#B3DE69", "#FCCDE5",
+          "#D9D9D9", "#BC80BD", "#CCEBC5", "#FFED6F")
+
+######
+# function definition
+
+plotrankedvalues<-function(val, tglist, ...){
+  
+  plot(val,log='y',ylim=c(max(val),min(val)),type='l',lwd=2, ...)
+  if(length(tglist)>0){
+    for(i in 1:length(tglist)){
+      targetgene=tglist[i];
+      tx=which(names(val)==targetgene);ty=val[targetgene];
+      points(tx,ty,col=colors[(i %% length(colors)) ],cex=2,pch=20)
+      # text(tx+50,ty,targetgene,col=colors[i])
+    }
+    legend('topright',tglist,pch=20,pt.cex = 2,cex=1,col=colors)
+  }
+}
+
+
+
+plotrandvalues<-function(val,targetgenelist, ...){
+  # choose the one with the best distance distribution
+  
+  mindiffvalue=0;
+  randval=val;
+  for(i in 1:20){
+    randval0=sample(val)
+    vindex=sort(which(names(randval0) %in% targetgenelist))
+    if(max(vindex)>0.9*length(val)){
+      # print('pass...')
+      next;
+    }
+    mindiffind=min(diff(vindex));
+    if (mindiffind > mindiffvalue){
+      mindiffvalue=mindiffind;
+      randval=randval0;
+      # print(paste('Diff: ',mindiffvalue))
+    }
+  }
+  plot(randval,log='y',ylim=c(max(randval),min(randval)),pch=20,col='grey', ...)
+  
+  if(length(targetgenelist)>0){
+    for(i in 1:length(targetgenelist)){
+      targetgene=targetgenelist[i];
+      tx=which(names(randval)==targetgene);ty=randval[targetgene];
+      points(tx,ty,col=colors[(i %% length(colors)) ],cex=2,pch=20)
+      text(tx+50,ty,targetgene,col=colors[i])
+    }
+  }
+  
+}
+
+
+
+
+# set.seed(1235)
+
+
+
+pvec=gstable[,startindex]
+names(pvec)=gstable[,'id']
+pvec=sort(pvec);
+
+plotrankedvalues(pvec,targetgenelist,xlab='Genes',ylab='RRA score',main=paste('Distribution of RRA scores in \n',samplelabel))
+
+# plotrandvalues(pvec,targetgenelist,xlab='Genes',ylab='RRA score',main=paste('Distribution of RRA scores in \n',samplelabel))
+
+
+pvec=gstable[,startindex+1]
+names(pvec)=gstable[,'id']
+pvec=sort(pvec);
+
+plotrankedvalues(pvec,targetgenelist,xlab='Genes',ylab='p value',main=paste('Distribution of p values in \n',samplelabel))
+
+# plotrandvalues(pvec,targetgenelist,xlab='Genes',ylab='p value',main=paste('Distribution of p values in \n',samplelabel))
+
+
+
+# you need to write after this code:
+# dev.off()
+
+
+
+
+@
+%%
+\clearpage
+\newpage
+The following figures show the distribution of sgRNA read counts (normalized) of selected genes in selected samples.
+%
+
+
+<<fig=TRUE,echo=FALSE,width=4.5,height=4.5>>=
+par(mfrow=c(2,2));
+
+# parameters
+# Do not modify the variables beginning with "__"
+targetmat=list(c(211.90189487495104,349.07601778901284,242.1865916732106,455.0001186583042,104.92811127068434,109.88388695949793,764.622280465769,609.2036090458862,289.202020899427,320.52800876195306,313.63002027227276,732.328027153317,253.79192736005893,714.2071060810532,690.6926684352338,219.940001580557,328.51261562138274,231.26307710255995,247.0843689922895,236.25858645762642,169.82517366404713,205.5133880826926,240.85588982272873,285.8431400906804,165.78987670930718,324.5316107306677),c(129.2280495260118,174.53800889450642,175.78059073055607,365.44127177307234,23.317358060152078,149.967317422711,37.10666949319173,166.3688570888364,33.48654978835471,122.15244236354917,396.47568600457123,16.974490695606686,172.4483608985016,634.6704056311178,18.467718407359193,62.569138380675696,120.62572604847648,147.90671524581305,103.45054895524925,67.93185819265085,95.01472738760194,149.83242086816995,123.26631398334938,102.90353043264494,111.27338571930979,69.5424880137145),c(176.85246529336192,303.18809056792196,657.0287857973229,1040.7355655283836,234.00634338938335,311.6832265329155,797.2311718385739,1038.5820563854566,251.14912341266032,644.9648956795396,281.0835087345841,855.9993165070229,1384.467501175706,1894.2720290831571,546.6444648578321,6328.9631489301655,210.45339438244832,283.1066680134635,465.0999886913685,287.95893871044035,281.7678122528885,174.12957019814348,296.0013460784377,553.3923192155572,336.8073621436826,797.8691904369181),c(137.52218935066267,57.35990902636361,36.71861228593838,45.2941294591977,54.962343998929896,80.85795455510225,152.92445609315382,170.03875834814897,51.75194058200273,270.689812277625,316.5887940484263,118.8214348692468,53.68675386462785,108.75426388052401,92.33859203679596,185.81138064564297,148.85727895343905,98.60447683054204,58.99246180092725,83.56219724582715,162.72637219255964,144.7705147577588,102.9922491834564,102.90353043264494,156.82826175204735,115.90414668952418))
+targetgene="Acnat1"
+collabel=c("In.vivo.input.Pool.D..25.32._1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1870_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1871_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1872_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1873_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1874_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1883_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1884_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1885_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1886_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1876_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1877_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1878_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1879_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1880_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1881_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1870_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1871_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1872_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1873_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1874_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1883_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1884_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1885_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1886_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1887_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430")
+
+# set up color using RColorBrewer
+#library(RColorBrewer)
+#colors <- brewer.pal(length(targetgenelist), "Set1")
+
+colors=c( "#E41A1C", "#377EB8", "#4DAF4A", "#984EA3", "#FF7F00",  "#A65628", "#F781BF",
+          "#999999", "#66C2A5", "#FC8D62", "#8DA0CB", "#E78AC3", "#A6D854", "#FFD92F", "#E5C494", "#B3B3B3", 
+          "#8DD3C7", "#FFFFB3", "#BEBADA", "#FB8072", "#80B1D3", "#FDB462", "#B3DE69", "#FCCDE5",
+          "#D9D9D9", "#BC80BD", "#CCEBC5", "#FFED6F")
+
+
+## code
+
+targetmatvec=unlist(targetmat)+1
+yrange=range(targetmatvec[targetmatvec>0]);
+# yrange[1]=1; # set the minimum value to 1
+for(i in 1:length(targetmat)){
+  vali=targetmat[[i]]+1;
+  if(i==1){
+    plot(1:length(vali),vali,type='b',las=1,pch=20,main=paste('sgRNAs in',targetgene),ylab='Read counts',xlab='Samples',xlim=c(0.7,length(vali)+0.3),ylim = yrange,col=colors[(i %% length(colors))],xaxt='n',log='y')
+    axis(1,at=1:length(vali),labels=(collabel),las=2)
+    # lines(0:100,rep(1,101),col='black');
+  }else{
+    lines(1:length(vali),vali,type='b',pch=20,col=colors[(i %% length(colors))])
+  }
+}
+
+
+
+# parameters
+# Do not modify the variables beginning with "__"
+targetmat=list(c(103.54297135935107,333.50689962471415,182.8118143597783,59.705897923487875,272.31343163106175,73.94701826834137,50.600003854352366,302.1552036834014,733.6598635448622,512.0630383879982,62.134249299223846,162.47012522937828,668.6441163140014,248.3492891600026,317.64475660657814,20.85637946022523,179.6553366679437,264.8089300449093,307.78675722222914,221.83058117777136,135.96935126156828,109.33717198488078,117.58957583937935,276.6961596077786,188.1939141024568,100.20100423481445),c(92.305749661437,256.48073607502585,29.687388656716134,322.2059663802018,19.153544120839207,128.5434149337523,24.73777966212782,183.4950629656284,1207.0379082802401,963.5384653636759,612.4661716637779,991.7952420718764,538.4944099755096,477.22020269961286,166.20946566623275,932.8489722209831,123.19223085801852,96.06312433490952,178.68731183179415,96.18670186570031,66.07345984999904,38.47048643912472,49.468718111738895,240.10823767617154,188.94071534889514,142.82381946902657),c(23.27710208853629,1.638854543610389,35.15611814611121,12.35294439796301,60.79168351396792,98.13529527200444,65.21778274560971,14.67960503725027,13.699043095236016,153.42346760861776,2.9587737761535164,19.399417937836212,109.00037905848684,3.24639593673206,73.87087362943677,60.673103884291585,15.399028857252315,31.512770945843332,64.1222410879644,39.677014519601386,64.4352748950404,64.79239821326269,8.109625919957196,52.59513777668519,14.936024928766415,37.38843441597554),c(291.0975525554883,423.64389952328554,657.8100328672365,595.0001551685516,1356.5705814281334,1378.7317892087947,2777.3779893388964,1156.018896683459,587.536737195678,914.6774884182562,488.1976730653302,771.1268630289894,426.2402882585605,3155.496850503562,1669.481744025271,604.8350043465317,544.0990196229152,478.79081017716805,806.2303112793392,596.3575515673419,713.1565170586674,464.68298093574333,720.9457442841948,652.4846077803264,651.9574881406539,723.8400902932865))
+targetgene="Pou2af1"
+collabel=c("In.vivo.input.Pool.D..25.32._1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1870_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1871_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1872_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1873_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1874_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1883_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1884_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1885_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1886_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1876_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1877_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1878_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1879_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1880_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1881_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1870_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1871_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1872_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1873_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1874_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1883_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1884_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1885_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1886_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1887_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430")
+
+# set up color using RColorBrewer
+#library(RColorBrewer)
+#colors <- brewer.pal(length(targetgenelist), "Set1")
+
+colors=c( "#E41A1C", "#377EB8", "#4DAF4A", "#984EA3", "#FF7F00",  "#A65628", "#F781BF",
+          "#999999", "#66C2A5", "#FC8D62", "#8DA0CB", "#E78AC3", "#A6D854", "#FFD92F", "#E5C494", "#B3B3B3", 
+          "#8DD3C7", "#FFFFB3", "#BEBADA", "#FB8072", "#80B1D3", "#FDB462", "#B3DE69", "#FCCDE5",
+          "#D9D9D9", "#BC80BD", "#CCEBC5", "#FFED6F")
+
+
+## code
+
+targetmatvec=unlist(targetmat)+1
+yrange=range(targetmatvec[targetmatvec>0]);
+# yrange[1]=1; # set the minimum value to 1
+for(i in 1:length(targetmat)){
+  vali=targetmat[[i]]+1;
+  if(i==1){
+    plot(1:length(vali),vali,type='b',las=1,pch=20,main=paste('sgRNAs in',targetgene),ylab='Read counts',xlab='Samples',xlim=c(0.7,length(vali)+0.3),ylim = yrange,col=colors[(i %% length(colors))],xaxt='n',log='y')
+    axis(1,at=1:length(vali),labels=(collabel),las=2)
+    # lines(0:100,rep(1,101),col='black');
+  }else{
+    lines(1:length(vali),vali,type='b',pch=20,col=colors[(i %% length(colors))])
+  }
+}
+
+
+
+# parameters
+# Do not modify the variables beginning with "__"
+targetmat=list(c(128.42539083330365,251.5641724441947,92.18715424980273,398.38245683430705,261.4875153888483,328.26947362114163,602.7022681318415,626.3298149226782,490.1213196295553,79.15478265157986,266.2896398538165,33.94898139121337,87.85105177848193,547.0177153393521,29.54834945177471,91.00965582643738,197.62087033473804,125.03454278512032,269.3134125694505,120.2333773321254,291.5969219826404,248.03339941014622,288.7026827504762,303.3748526829088,300.96090231464325,200.4020084696289),c(88.56000909546565,165.52430890464927,49.99981247446928,388.0883365026712,50.79853005961702,547.3461539114613,240.63112944069792,29.35921007450054,229.83950082007095,70.35980680140433,73.96934440383791,181.8695431672145,349.7773357846966,163.94299480496903,66.4837862664931,28.44051744576168,184.7883462870278,72.17441087596376,171.8476061157446,217.62241297114699,199.3125028533029,40.49524888328918,62.444119583670414,269.07367587202714,151.6006530269791,163.76134274197287),c(80.80097506595355,254.84188153141548,119.53080169677813,21.617652696435265,76.61417648335683,29.717026033071768,392.431141003755,135.786346594565,191.78660333330424,55.701513717778425,390.5581384522642,431.63704911685574,45.552397218472116,38.95675124078472,749.7893673387832,322.32586438529904,184.7883462870278,167.22099421262027,218.87058291358517,120.83454421878604,70.44195306322213,225.76101252433716,112.72380028740503,179.89061616373488,115.75419319793971,96.4621607932169),c(414.1718854374043,861.2180626672593,1261.7140179104358,615.5883958318233,2702.315246614053,733.941433654005,803.9778390191542,1923.0282598797855,1144.6311564019427,833.5682666888596,837.3329786514452,1154.2653673012546,1477.1991669418815,1173.5721311286397,369.35436814718383,1905.5146688660327,562.0645532897096,496.0720071474692,762.6271873395233,971.4856888435733,842.0270668487482,934.4278679818977,817.4502927316854,773.6820991787749,616.1110283116145,537.6456869017283))
+targetgene="Arhgap30"
+collabel=c("In.vivo.input.Pool.D..25.32._1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1870_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1871_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1872_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1873_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1874_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1883_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1884_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1885_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1886_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1876_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1877_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1878_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1879_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1880_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1881_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1870_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1871_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1872_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1873_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1874_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1883_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1884_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1885_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1886_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1887_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430")
+
+# set up color using RColorBrewer
+#library(RColorBrewer)
+#colors <- brewer.pal(length(targetgenelist), "Set1")
+
+colors=c( "#E41A1C", "#377EB8", "#4DAF4A", "#984EA3", "#FF7F00",  "#A65628", "#F781BF",
+          "#999999", "#66C2A5", "#FC8D62", "#8DA0CB", "#E78AC3", "#A6D854", "#FFD92F", "#E5C494", "#B3B3B3", 
+          "#8DD3C7", "#FFFFB3", "#BEBADA", "#FB8072", "#80B1D3", "#FDB462", "#B3DE69", "#FCCDE5",
+          "#D9D9D9", "#BC80BD", "#CCEBC5", "#FFED6F")
+
+
+## code
+
+targetmatvec=unlist(targetmat)+1
+yrange=range(targetmatvec[targetmatvec>0]);
+# yrange[1]=1; # set the minimum value to 1
+for(i in 1:length(targetmat)){
+  vali=targetmat[[i]]+1;
+  if(i==1){
+    plot(1:length(vali),vali,type='b',las=1,pch=20,main=paste('sgRNAs in',targetgene),ylab='Read counts',xlab='Samples',xlim=c(0.7,length(vali)+0.3),ylim = yrange,col=colors[(i %% length(colors))],xaxt='n',log='y')
+    axis(1,at=1:length(vali),labels=(collabel),las=2)
+    # lines(0:100,rep(1,101),col='black');
+  }else{
+    lines(1:length(vali),vali,type='b',pch=20,col=colors[(i %% length(colors))])
+  }
+}
+
+
+
+# parameters
+# Do not modify the variables beginning with "__"
+targetmat=list(c(180.59820585933326,198.30139977685707,205.4679793872722,451.91188255881343,481.3368913845679,220.45886754767193,122.5644537805424,570.0579956132188,347.0424250793124,451.47542697567775,443.81606642302745,1697.4490695606685,616.5842337786047,1004.7595424185726,273.32223242891604,365.93465780213364,230.98543285878475,374.0870873571079,224.0003622006223,295.7741082370285,273.5768874780952,422.1629696082897,408.7251463658427,319.3820685279869,167.28347920218383,138.3372073391095),c(101.13499528122662,95.05356352940257,56.249789033777944,398.38245683430705,561.282119019375,169.31793902564146,346.3289152697895,14.67960503725027,21.30962259258936,56.67873325668682,1189.4270580137136,317.66546873206795,1617.1101012557601,277.5668525905911,299.17703819921894,726.1812121151149,243.817956906495,173.82851070126483,246.2294057777833,189.36756929809752,265.9320243549548,275.3676924063664,210.03931132689138,205.04481249171474,330.08615092573774,483.058572654404),c(217.78805862147743,482.64266309325956,242.1865916732106,275.88242488784056,406.3882404769362,285.42166864322417,214.76890524847337,212.85427304012893,1412.5235547087805,128.99297913590794,964.5602510260463,1840.5197768522105,634.4798184001473,488.582588478175,849.5150467385229,602.9389698501476,256.65048095420525,275.4826105265659,251.35918506482045,228.44341693103826,208.04948927974905,291.5657919596821,224.63663798281434,459.6357692658141,175.49829291300537,290.1342510679702),c(76.25257580727404,502.3089176165842,134.37449602513618,463.23541492361284,115.7540275128978,39.39233683453699,328.337802788242,157.8057541504404,231.36161671954162,77.20034357376308,94.68076083691253,38.798835875672424,354.65794977239005,17.85517765202633,36.935436814718386,206.6677601058682,171.9558222393175,164.17137121786124,249.64925863580808,150.89288855181738,61.15890498512309,71.8790667678383,51.09064329573034,121.19749139844849,182.21950413095024,40.37950916925359))
+targetgene="Btbd9"
+collabel=c("In.vivo.input.Pool.D..25.32._1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1870_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1871_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1872_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1873_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1874_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1883_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1884_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1885_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1886_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1876_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1877_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1878_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1879_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1880_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1881_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1870_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1871_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1872_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1873_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1874_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1883_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1884_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1885_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1886_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1887_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430")
+
+# set up color using RColorBrewer
+#library(RColorBrewer)
+#colors <- brewer.pal(length(targetgenelist), "Set1")
+
+colors=c( "#E41A1C", "#377EB8", "#4DAF4A", "#984EA3", "#FF7F00",  "#A65628", "#F781BF",
+          "#999999", "#66C2A5", "#FC8D62", "#8DA0CB", "#E78AC3", "#A6D854", "#FFD92F", "#E5C494", "#B3B3B3", 
+          "#8DD3C7", "#FFFFB3", "#BEBADA", "#FB8072", "#80B1D3", "#FDB462", "#B3DE69", "#FCCDE5",
+          "#D9D9D9", "#BC80BD", "#CCEBC5", "#FFED6F")
+
+
+## code
+
+targetmatvec=unlist(targetmat)+1
+yrange=range(targetmatvec[targetmatvec>0]);
+# yrange[1]=1; # set the minimum value to 1
+for(i in 1:length(targetmat)){
+  vali=targetmat[[i]]+1;
+  if(i==1){
+    plot(1:length(vali),vali,type='b',las=1,pch=20,main=paste('sgRNAs in',targetgene),ylab='Read counts',xlab='Samples',xlim=c(0.7,length(vali)+0.3),ylim = yrange,col=colors[(i %% length(colors))],xaxt='n',log='y')
+    axis(1,at=1:length(vali),labels=(collabel),las=2)
+    # lines(0:100,rep(1,101),col='black');
+  }else{
+    lines(1:length(vali),vali,type='b',pch=20,col=colors[(i %% length(colors))])
+  }
+}
+
+
+
+par(mfrow=c(1,1));
+@
+%
+
+
+<<fig=TRUE,echo=FALSE,width=4.5,height=4.5>>=
+par(mfrow=c(2,2));
+
+# parameters
+# Do not modify the variables beginning with "__"
+targetmat=list(c(161.3343972343377,378.57539957399985,497.65438353495205,359.26479957409083,373.07772896243324,281.2751068711676,450.90225656878437,393.9027351662156,1067.0032455289386,636.1699198293641,26.62896398538165,640.180791948595,608.4498771324489,154.20380699477286,299.17703819921894,656.0279357489028,254.0839761446632,308.0119224706622,271.87830221296906,229.04458381769888,359.854628439251,288.5286482934354,386.01819378996254,427.6213375756579,463.76357403819713,268.44895910670436),c(279.8603308575742,517.0586085090778,415.6234411940259,278.9706609873313,769.4728159850185,613.6911422643658,156.29778968344397,742.5433548009096,624.067518782974,346.91293631247964,272.2071874061235,80.02259899357438,774.390752714026,1063.1946692797496,779.3377167905579,140.30655273242428,361.8771781454294,308.52019296978875,669.4361969583484,431.6378246223302,483.26456171280296,237.90958718932393,334.11658790223646,351.3965002181431,499.61003386723655,580.2685021359404),c(206.283284025994,222.8842179310129,178.1243319402968,578.5295626379343,376.40878011388355,538.3619367386723,1188.5378683122321,102.7572352607519,415.5376405554925,616.6255290511963,127.22727237460121,1581.0525619336513,294.4637105908376,253.2188830651007,565.1121832651913,777.3741435174859,384.9757214313079,160.10520722484918,320.611205439822,324.6301187967386,223.88527717768272,354.3334277287803,269.2395805425789,452.0132855300626,235.24239262807103,532.4113060834917),c(171.50140734197424,170.44087253548045,412.49845291437157,201.76475850006247,283.1393478732752,449.901952268133,140.5555662620899,66.05822266762623,401.8385974602565,280.4620076667089,26.62896398538165,164.8950524716078,94.35853709540652,2097.1717751289107,84.95150467385228,390.58310625512706,282.3155290496258,171.79542870475882,278.7180079290186,175.54073090490309,195.4900712917327,453.5467874928388,148.40615433521668,358.25673558031946,292.7460886038217,159.2747306120558))
+targetgene="Ccdc32"
+collabel=c("In.vivo.input.Pool.D..25.32._1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1870_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1871_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1872_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1873_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1874_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1883_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1884_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1885_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1886_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1876_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1877_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1878_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1879_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1880_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1881_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1870_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1871_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1872_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1873_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1874_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1883_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1884_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1885_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1886_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1887_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430")
+
+# set up color using RColorBrewer
+#library(RColorBrewer)
+#colors <- brewer.pal(length(targetgenelist), "Set1")
+
+colors=c( "#E41A1C", "#377EB8", "#4DAF4A", "#984EA3", "#FF7F00",  "#A65628", "#F781BF",
+          "#999999", "#66C2A5", "#FC8D62", "#8DA0CB", "#E78AC3", "#A6D854", "#FFD92F", "#E5C494", "#B3B3B3", 
+          "#8DD3C7", "#FFFFB3", "#BEBADA", "#FB8072", "#80B1D3", "#FDB462", "#B3DE69", "#FCCDE5",
+          "#D9D9D9", "#BC80BD", "#CCEBC5", "#FFED6F")
+
+
+## code
+
+targetmatvec=unlist(targetmat)+1
+yrange=range(targetmatvec[targetmatvec>0]);
+# yrange[1]=1; # set the minimum value to 1
+for(i in 1:length(targetmat)){
+  vali=targetmat[[i]]+1;
+  if(i==1){
+    plot(1:length(vali),vali,type='b',las=1,pch=20,main=paste('sgRNAs in',targetgene),ylab='Read counts',xlab='Samples',xlim=c(0.7,length(vali)+0.3),ylim = yrange,col=colors[(i %% length(colors))],xaxt='n',log='y')
+    axis(1,at=1:length(vali),labels=(collabel),las=2)
+    # lines(0:100,rep(1,101),col='black');
+  }else{
+    lines(1:length(vali),vali,type='b',pch=20,col=colors[(i %% length(colors))])
+  }
+}
+
+
+
+# parameters
+# Do not modify the variables beginning with "__"
+targetmat=list(c(77.32278739755158,2.4582818154155834,19.531176747839563,266.6177165893683,127.41270654297385,655.156759984931,301.35113406592075,332.7377141776728,73.0615631745921,38.111562017427346,47.34038041845626,92.14723520472201,302.59806723699336,77.91350248156944,25.85480577030287,37.92068992768224,33.36456252404668,55.40148440478908,117.9849236018545,80.55636281252401,129.41661144173366,182.2286199748013,158.94866803116105,115.09950440984731,66.46531093301054,139.83274471574853),c(162.13705592704585,167.98259072006488,407.0297234249765,226.4706472959885,219.016613207857,201.1082459447415,427.2889214367533,1266.1159344628359,382.0510907671378,727.0513369478447,662.7653258583877,92.14723520472201,374.1804057231638,1142.7313697296852,413.67689232484594,582.0825903899224,182.22184147748573,230.75480660343342,165.86286361420127,299.9822764436529,257.19503792850867,441.39821282785203,252.2093661106688,450.4887887829123,492.8888226492916,198.15870240467038),c(105.68339453990613,369.56169958414273,303.9051101963836,44.26471742603412,403.0571893254859,242.57386366530673,29.2355577825147,677.7084325530542,191.78660333330424,97.72195389083934,23.67019020922813,201.2689611050507,322.1205231877671,115.24705575398814,435.83815441367693,312.8456919033785,105.22669719122416,176.87813369602387,137.64907753549693,128.04854685871356,103.75171381404809,71.8790667678383,93.26069807950776,115.09950440984731,174.00469042012872,66.55141326043646),c(85.34937432463305,240.9116179107272,88.28091890023482,60.73530995665146,234.00634338938335,134.7632575918371,410.4222534853025,30.582510494271396,161.34428534389087,46.906537867602886,0.0,138.22085280708302,78.08982380309506,84.40629435503357,668.5314063464027,227.52413956609345,133.45825009618673,88.43906684801193,47.02297679784056,127.44737997205293,70.988014714875,133.63432131485428,70.55374550362761,195.13558363523782,113.51378945862474,90.48001128666081))
+targetgene="Zfp668"
+collabel=c("In.vivo.input.Pool.D..25.32._1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1870_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1871_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1872_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1873_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1874_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1883_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1884_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1885_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1886_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1876_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1877_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1878_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1879_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1880_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1881_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1870_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1871_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1872_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1873_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1874_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1883_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1884_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1885_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1886_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1887_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430")
+
+# set up color using RColorBrewer
+#library(RColorBrewer)
+#colors <- brewer.pal(length(targetgenelist), "Set1")
+
+colors=c( "#E41A1C", "#377EB8", "#4DAF4A", "#984EA3", "#FF7F00",  "#A65628", "#F781BF",
+          "#999999", "#66C2A5", "#FC8D62", "#8DA0CB", "#E78AC3", "#A6D854", "#FFD92F", "#E5C494", "#B3B3B3", 
+          "#8DD3C7", "#FFFFB3", "#BEBADA", "#FB8072", "#80B1D3", "#FDB462", "#B3DE69", "#FCCDE5",
+          "#D9D9D9", "#BC80BD", "#CCEBC5", "#FFED6F")
+
+
+## code
+
+targetmatvec=unlist(targetmat)+1
+yrange=range(targetmatvec[targetmatvec>0]);
+# yrange[1]=1; # set the minimum value to 1
+for(i in 1:length(targetmat)){
+  vali=targetmat[[i]]+1;
+  if(i==1){
+    plot(1:length(vali),vali,type='b',las=1,pch=20,main=paste('sgRNAs in',targetgene),ylab='Read counts',xlab='Samples',xlim=c(0.7,length(vali)+0.3),ylim = yrange,col=colors[(i %% length(colors))],xaxt='n',log='y')
+    axis(1,at=1:length(vali),labels=(collabel),las=2)
+    # lines(0:100,rep(1,101),col='black');
+  }else{
+    lines(1:length(vali),vali,type='b',pch=20,col=colors[(i %% length(colors))])
+  }
+}
+
+
+
+# parameters
+# Do not modify the variables beginning with "__"
+targetmat=list(c(47.6244157673501,67.19303628802595,311.7175808955194,76.17649045410522,254.8254130859477,306.1544775035068,8.995556240773753,0.0,240.49431211636562,35.179903400702166,2.9587737761535164,9.699708968918106,258.6725413477524,219.13172572941406,369.35436814718383,73.94534535898038,136.0247549057288,118.42702629647574,117.9849236018545,176.1418977915637,261.56353114173174,88.07716632115397,57.57834403169609,50.30839265595975,73.18652215095543,175.72564175508504),c(388.48680727074355,742.4011082555062,792.1845288923727,273.82360082151337,1206.67327961287,751.9098679995833,486.88448153187943,1667.3584721476766,1328.8071802378936,880.4748045564625,742.6522178145326,931.1720610161382,1610.6026159388355,678.4967507770006,1311.2080069225026,2208.8801882874905,510.73445709886846,583.4945329972281,558.2909790725435,631.826397880319,578.8253507520577,746.1249606746031,529.558572573205,503.0839265595975,472.725188995457,504.7438646156698),c(71.16907075345577,58.998763569974,142.18696672427203,48.382365558688456,61.62444630183049,69.10936286760875,282.2355770542765,19.572806716333695,22.831738492060026,337.14074092339575,14.793868880767583,412.2376311790195,14.641841963080322,254.8420810334667,22.16126208883103,280.61310546484856,82.12815390534568,60.484189396054134,32.4886021512353,53.50385291279581,64.4352748950404,180.20385753063684,76.23048364759765,57.16862801813608,117.99459693725467,54.58711424732429),c(61.002060645819235,43.42964540567531,25.781153307148223,4.117648132654336,11.658679030076039,115.41263598890663,5.622222650483596,41.5922142722091,398.79436566131517,8.794975850175542,245.57822342074186,36.373908633442895,1.626871329231147,485.336192541443,62.790242585021254,0.0,46.19708657175695,62.00900089343365,39.328307867284835,61.31902243938396,25.118835976032695,28.346674218302425,80.28529660757624,87.658562961142,85.88214334040688,71.78579407867304))
+targetgene="Kctd13"
+collabel=c("In.vivo.input.Pool.D..25.32._1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1870_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1871_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1872_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1873_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1874_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1883_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1884_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1885_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1886_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1876_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1877_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1878_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1879_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1880_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1881_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1870_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1871_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1872_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1873_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1874_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1883_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1884_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1885_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1886_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1887_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430")
+
+# set up color using RColorBrewer
+#library(RColorBrewer)
+#colors <- brewer.pal(length(targetgenelist), "Set1")
+
+colors=c( "#E41A1C", "#377EB8", "#4DAF4A", "#984EA3", "#FF7F00",  "#A65628", "#F781BF",
+          "#999999", "#66C2A5", "#FC8D62", "#8DA0CB", "#E78AC3", "#A6D854", "#FFD92F", "#E5C494", "#B3B3B3", 
+          "#8DD3C7", "#FFFFB3", "#BEBADA", "#FB8072", "#80B1D3", "#FDB462", "#B3DE69", "#FCCDE5",
+          "#D9D9D9", "#BC80BD", "#CCEBC5", "#FFED6F")
+
+
+## code
+
+targetmatvec=unlist(targetmat)+1
+yrange=range(targetmatvec[targetmatvec>0]);
+# yrange[1]=1; # set the minimum value to 1
+for(i in 1:length(targetmat)){
+  vali=targetmat[[i]]+1;
+  if(i==1){
+    plot(1:length(vali),vali,type='b',las=1,pch=20,main=paste('sgRNAs in',targetgene),ylab='Read counts',xlab='Samples',xlim=c(0.7,length(vali)+0.3),ylim = yrange,col=colors[(i %% length(colors))],xaxt='n',log='y')
+    axis(1,at=1:length(vali),labels=(collabel),las=2)
+    # lines(0:100,rep(1,101),col='black');
+  }else{
+    lines(1:length(vali),vali,type='b',pch=20,col=colors[(i %% length(colors))])
+  }
+}
+
+
+
+# parameters
+# Do not modify the variables beginning with "__"
+targetmat=list(c(52.70792082116837,7.37484544624675,78.90595406127183,3.0882360994907523,50.79853005961702,15.204059830873927,0.0,45.262115531521665,15.221158994706684,3.9088781556335737,133.14481992690824,12.124636211147632,3.253742658462294,71.42071060810532,88.64504835532412,34.12862093491402,12.832524047710264,55.90975490391559,50.44282965586533,40.27818140626201,14.197602942975001,11.136193442904524,41.3590921917817,48.02164753523431,20.91043490027298,28.415210156141413),c(220.19603469960188,318.75720873222065,134.37449602513618,211.02946679853474,386.4019335682344,80.16686092642615,1134.5645308675896,236.09698101577519,226.7952690211296,180.78561469805277,56.21670174691681,482.56052120367576,261.92628400621464,448.0026392690243,1108.0631044415516,1175.5413877581495,200.1873751442801,189.07662567506,216.3056932700666,225.43758249773512,281.7678122528885,158.94385186691002,163.00348099113964,253.06646002694904,238.2295976138243,106.18315374137053),c(139.66261253121772,661.277808346792,108.59334271798797,159.55886514035552,414.71586835556195,156.8782537094719,1110.9511957355585,537.0288842794057,474.9001606348486,125.08410098027436,656.8477783060806,506.80979362597105,219.62762944620485,409.0458880282396,1196.7081527968758,1306.3677680086532,313.11358676413045,98.09620633141553,147.05367289506503,374.52697038957064,177.47003678718752,375.5934333925071,218.9598998388443,130.34447188135027,332.3265546650527,168.24795487188993),c(144.47856468746662,83.58158172412983,489.84191283581623,506.4707203164834,144.9007250880879,134.7632575918371,302.47557859601744,183.4950629656284,299.8568321957217,336.16352138448735,195.2790692261321,94.57216244695154,253.79192736005893,883.0196947911203,336.1124750139373,290.09327794676915,205.32038476336422,181.45256818816242,217.16065648457277,143.67888591188986,114.67294684710578,165.0181391994034,159.75963062315677,208.85605435959047,227.02757891724949,174.23010437844601))
+targetgene="Tmsb15b2_Tmsb15l"
+collabel=c("In.vivo.input.Pool.D..25.32._1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1870_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1871_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1872_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1873_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1874_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1883_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1884_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1885_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1886_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1876_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1877_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1878_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1879_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1880_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1881_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1870_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1871_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1872_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1873_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1874_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1883_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1884_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1885_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1886_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1887_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430")
+
+# set up color using RColorBrewer
+#library(RColorBrewer)
+#colors <- brewer.pal(length(targetgenelist), "Set1")
+
+colors=c( "#E41A1C", "#377EB8", "#4DAF4A", "#984EA3", "#FF7F00",  "#A65628", "#F781BF",
+          "#999999", "#66C2A5", "#FC8D62", "#8DA0CB", "#E78AC3", "#A6D854", "#FFD92F", "#E5C494", "#B3B3B3", 
+          "#8DD3C7", "#FFFFB3", "#BEBADA", "#FB8072", "#80B1D3", "#FDB462", "#B3DE69", "#FCCDE5",
+          "#D9D9D9", "#BC80BD", "#CCEBC5", "#FFED6F")
+
+
+## code
+
+targetmatvec=unlist(targetmat)+1
+yrange=range(targetmatvec[targetmatvec>0]);
+# yrange[1]=1; # set the minimum value to 1
+for(i in 1:length(targetmat)){
+  vali=targetmat[[i]]+1;
+  if(i==1){
+    plot(1:length(vali),vali,type='b',las=1,pch=20,main=paste('sgRNAs in',targetgene),ylab='Read counts',xlab='Samples',xlim=c(0.7,length(vali)+0.3),ylim = yrange,col=colors[(i %% length(colors))],xaxt='n',log='y')
+    axis(1,at=1:length(vali),labels=(collabel),las=2)
+    # lines(0:100,rep(1,101),col='black');
+  }else{
+    lines(1:length(vali),vali,type='b',pch=20,col=colors[(i %% length(colors))])
+  }
+}
+
+
+
+par(mfrow=c(1,1));
+@
+%
+
+
+<<fig=TRUE,echo=FALSE,width=4.5,height=4.5>>=
+par(mfrow=c(2,2));
+
+# parameters
+# Do not modify the variables beginning with "__"
+targetmat=list(c(142.60569440448094,104.8866907910649,362.49864043990226,632.0589883624407,572.940798049451,147.20294290800666,16.866667951450786,857.53359425937,1108.1003748146466,839.43158392231,514.8266370507118,1423.432291188732,450.64335819702774,360.3499489772587,236.38679561419767,115.65810427943083,133.45825009618673,155.53077273271063,101.74062252623685,102.19837073230659,19.658219459503847,65.80477943534491,97.31551103948635,173.7926291751337,150.10705053410246,70.29025670203401),c(48.15952156248887,4.097136359025972,0.0,64.8529580893058,14.989730181526335,29.717026033071768,33.73333590290157,3.6699012593125677,22.831738492060026,0.0,153.85623635998286,0.0,317.23990920007367,35.71035530405266,33.24189313324655,288.19724345038503,20.53203847633642,35.578934938855376,1.7099264290123841,18.636173486479436,28.941267537602887,53.65620477035816,72.98663327961476,70.1268503689136,26.138043625341226,54.58711424732429),c(230.09549190966905,815.3301354461685,477.3419597171989,597.0589792348787,354.7569476294566,603.3247378342245,1222.2712042151338,1500.9896150588402,185.69813973542156,1245.9549121082016,517.7854108268654,2427.352169471756,854.1074478463521,3011.032231318986,1248.4177643374815,1331.0162164616465,138.59125971527084,107.24507531569263,94.90091681018731,177.9453984515456,162.18031054090676,235.88482474515948,482.5227422374532,201.99581899741415,286.7716786323151,200.4020084696289),c(113.97753436455699,164.7048816328441,259.3740272113094,25.735300829089603,226.51147829862018,975.8242036906357,11.244445300967191,157.8057541504404,50.22982468253206,22.47604939489305,130.18604615075472,150.34548901823064,188.71707419081304,496.6985783200052,29.54834945177471,134.61844924327195,51.330096190841054,77.25711586722882,112.00018110031115,84.76453101914841,61.15890498512309,66.81716065742714,81.09625919957196,115.09950440984731,92.60335455835177,50.848270805726735))
+targetgene="Ints14"
+collabel=c("In.vivo.input.Pool.D..25.32._1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1870_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1871_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1872_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1873_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1874_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1883_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1884_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1885_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1886_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1876_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1877_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1878_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1879_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1880_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1881_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1870_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1871_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1872_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1873_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1874_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1883_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1884_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1885_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1886_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1887_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430")
+
+# set up color using RColorBrewer
+#library(RColorBrewer)
+#colors <- brewer.pal(length(targetgenelist), "Set1")
+
+colors=c( "#E41A1C", "#377EB8", "#4DAF4A", "#984EA3", "#FF7F00",  "#A65628", "#F781BF",
+          "#999999", "#66C2A5", "#FC8D62", "#8DA0CB", "#E78AC3", "#A6D854", "#FFD92F", "#E5C494", "#B3B3B3", 
+          "#8DD3C7", "#FFFFB3", "#BEBADA", "#FB8072", "#80B1D3", "#FDB462", "#B3DE69", "#FCCDE5",
+          "#D9D9D9", "#BC80BD", "#CCEBC5", "#FFED6F")
+
+
+## code
+
+targetmatvec=unlist(targetmat)+1
+yrange=range(targetmatvec[targetmatvec>0]);
+# yrange[1]=1; # set the minimum value to 1
+for(i in 1:length(targetmat)){
+  vali=targetmat[[i]]+1;
+  if(i==1){
+    plot(1:length(vali),vali,type='b',las=1,pch=20,main=paste('sgRNAs in',targetgene),ylab='Read counts',xlab='Samples',xlim=c(0.7,length(vali)+0.3),ylim = yrange,col=colors[(i %% length(colors))],xaxt='n',log='y')
+    axis(1,at=1:length(vali),labels=(collabel),las=2)
+    # lines(0:100,rep(1,101),col='black');
+  }else{
+    lines(1:length(vali),vali,type='b',pch=20,col=colors[(i %% length(colors))])
+  }
+}
+
+
+
+# parameters
+# Do not modify the variables beginning with "__"
+targetmat=list(c(230.09549190966905,290.89668149084406,439.8421003613469,226.4706472959885,299.7946036305267,448.5197650107809,395.80447459404513,652.0191237378662,1371.4264254230723,403.59166956916647,287.00105628689107,664.4300643708902,17.895584621542618,425.2778677118999,472.77359122839533,612.4191423320682,369.5766925740556,213.47360963313224,215.4507300555604,887.9234915977461,615.411481412801,225.76101252433716,612.2767569567683,551.867822468407,320.3777347220396,438.19245135523335),c(119.86369811108341,249.10589062877912,151.561931563235,665.0001734236753,130.74375769442415,259.1601107535328,426.16447690665655,497.88327084673836,551.005955608382,401.63723049134967,313.63002027227276,55.77332657127911,48.80613987693441,887.8892886962184,225.30616456978214,121.34620776858317,325.9461108118407,270.90817603442736,202.62628183796753,427.4296564157058,242.9974349855337,103.26288465238741,347.091989374168,266.02468237772655,293.49288985026004,320.7927672890701),c(119.32859231594465,230.25906337725965,85.15593062058049,339.7059709439828,50.79853005961702,236.35402100722195,902.9289576676655,189.61156506448268,27.398086190472032,191.53502962604512,210.07293810689967,140.64578004931255,47.17926854770326,262.95807087529687,184.67718407359192,163.05896668903364,171.9558222393175,126.55935428249983,275.29815507099386,195.98040505136441,202.04281111156732,198.42671952811696,287.8917201584805,162.35890357150646,478.69959896696355,48.6049647407682),c(172.5716189322518,498.21178125755824,606.24772625294,204.85299459955323,294.7980269033513,474.0902292717961,268.7422426931159,1308.9314491548157,371.3962794708431,182.74005377586957,272.2071874061235,2330.355079782575,328.6280085046917,224.00131963451216,594.660532716966,597.2508663609952,597.9956206232982,331.3923654304815,470.2297679784056,459.8926682953797,416.0989785594981,382.68010194708273,349.52487715015513,482.5032204730685,297.97369732888995,270.69226517166294))
+targetgene="Adgrg1"
+collabel=c("In.vivo.input.Pool.D..25.32._1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1870_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1871_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1872_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1873_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1874_Pool.D..25.32._BM_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1883_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1884_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1885_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1886_Pool.D..25.32._BM_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1876_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1877_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1878_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1879_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1880_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1881_Pool.D..25.32._BM_mCD19_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1870_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1871_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1872_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1873_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1874_Pool.D..25.32._SP_hEGFRv3_15m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1883_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1884_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1885_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1886_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430","In.vivo_AR1887_Pool.D..25.32._SP_mCD19_10m_1400..1401..1402..1403..1427..1428..1429..1430")
+
+# set up color using RColorBrewer
+#library(RColorBrewer)
+#colors <- brewer.pal(length(targetgenelist), "Set1")
+
+colors=c( "#E41A1C", "#377EB8", "#4DAF4A", "#984EA3", "#FF7F00",  "#A65628", "#F781BF",
+          "#999999", "#66C2A5", "#FC8D62", "#8DA0CB", "#E78AC3", "#A6D854", "#FFD92F", "#E5C494", "#B3B3B3", 
+          "#8DD3C7", "#FFFFB3", "#BEBADA", "#FB8072", "#80B1D3", "#FDB462", "#B3DE69", "#FCCDE5",
+          "#D9D9D9", "#BC80BD", "#CCEBC5", "#FFED6F")
+
+
+## code
+
+targetmatvec=unlist(targetmat)+1
+yrange=range(targetmatvec[targetmatvec>0]);
+# yrange[1]=1; # set the minimum value to 1
+for(i in 1:length(targetmat)){
+  vali=targetmat[[i]]+1;
+  if(i==1){
+    plot(1:length(vali),vali,type='b',las=1,pch=20,main=paste('sgRNAs in',targetgene),ylab='Read counts',xlab='Samples',xlim=c(0.7,length(vali)+0.3),ylim = yrange,col=colors[(i %% length(colors))],xaxt='n',log='y')
+    axis(1,at=1:length(vali),labels=(collabel),las=2)
+    # lines(0:100,rep(1,101),col='black');
+  }else{
+    lines(1:length(vali),vali,type='b',pch=20,col=colors[(i %% length(colors))])
+  }
+}
+
+
+
+par(mfrow=c(1,1));
+@
+%__INDIVIDUAL_PAGE__
+
+
+
+
+
+
+
+
+
+\end{document}
+

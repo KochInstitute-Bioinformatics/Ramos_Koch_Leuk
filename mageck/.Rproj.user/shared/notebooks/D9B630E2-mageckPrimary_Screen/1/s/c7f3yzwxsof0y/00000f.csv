@@ -1,0 +1,8 @@
+"0","BarcodeAnnotations <- read_excel(""BarcodeAnnotations.xlsx"")"
+"0","GeneSymWhitelist.selection <- BarcodeAnnotations %>% filter(NegativeControlGroup == 'No' & "
+"0","                                                    CountOfGeneSym <= 1 & "
+"0","                                                    GeneTargetInMultiplePools == 'No' &"
+"0","                                                    between(BarcodesPerGene, 3,4))"
+"0",""
+"0","GeneSymWhitelist <- unique(GeneSymWhitelist.selection %>% select(GeneSym,Pool)) %>% mutate(geneSym.whitelist = 'Yes')"
+"0","#write.xlsx(GeneSymWhitelist,file='GeneSymWhitelist.xlsx')"

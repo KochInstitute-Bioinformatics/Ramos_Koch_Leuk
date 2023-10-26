@@ -1,0 +1,6 @@
+"0","forNorm <- all.counts %>% dplyr::select(-c(Gene))"
+"0","rownames(forNorm) <- forNorm[,1]"
+"0","forNorm <- forNorm %>% dplyr::select(-c(sgRNA))"
+"0",""
+"0","dat2 <- apply(forNorm,2,function(x){x/(sum(x)/1000000)})"
+"0","dat2 <- log((dat2+1),2)"

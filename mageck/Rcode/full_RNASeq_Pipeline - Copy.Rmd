@@ -1,0 +1,655 @@
+---
+title: "RNASeq_Pipeline"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+# load libraries
+```{r}
+library(openxlsx)
+library(ggplot2)
+library(tidyverse)
+library(reprex)
+library(matrixStats)
+library(XML)
+library(ggrepel)
+library(DESeq2)
+library(ComplexHeatmap)
+library(dplyr)
+library(readxl)
+
+source('X:/charliew/RNAseq-Class/R_code/data_formatting_tools.R')
+source('X:/charliew/RNAseq-Class/R_code/analysis_tools.R')
+source('X:/charliew/RNAseq-Class/R_code/plots.R')
+
+options(scipen = 999)
+```
+
+# location and initialize file locations
+```{r}
+setwd("X:/charliew/RNAseq-Class/")
+
+metadata_dir <- "X:/charliew/RNAseq-Class/metadata/" # diractory to store infosite metadata and QC figures
+salmon_dir <- 'X:/charliew/RNAseq-Class/salmon/' # directory to store salmon script alignment files from salmon
+deseq_dir <- 'X:/charliew/RNAseq-Class/deseq2/' # directory to store deseq2 results
+figure_dir <- 'X:/charliew/RNAseq-Class/figures/'
+data_dir <- 'X:/charliew/RNAseq-Class/data/'
+gsea_dir <- 'X:/charliew/RNAseq-Class/gsea/'
+
+alignment_target <- "/net/ostrom/data/bcc/charliew/RNAseq-Class/hg38_ens105_1.6/hg38_ens105/" # salmon alignment target
+
+# tx2genefile <- "X:/dpradhan/pipelinedev/mm10_ens100_geneID_to_Type_MGI.xlsx"
+orthologyfile <- ""
+tx2genefile <- 'X:/charliew/RNAseq-Class/documents/hg38ens105_txID_geneID.xlsx' #'X:/charliew/annotationFiles/mm10_ens101_txID_to_geneID.xlsx' #"mm10_ens100_geneID_to_Type_MGI.xlsx"
+id2symfile <- 'X:/charliew/RNAseq-Class/documents/hg38ens105_geneID_Sym_Type.xlsx'
+infosite_loc <- '' # this should ideally be a /net/ostrom/... etc full path to the infosite qc file
+```
+
+# read in QC info from Infosite
+```{r}
+
+table <- readHTMLTable(infosite_loc) # infosite file
+
+for (i in 1:length(table)){
+  table[[i]] <- name_cols(table[[i]])
+}
+
+# the numbers (11 and 14) would be adjusted based on the index file; they differ based on the number of projects run on the flow cell
+
+table1 <- table[[5]]
+table2 <- table[[9]]
+table2 <- table2[,-grep('Project ID',colnames(table2))]
+
+metadata <- merge(table1, table2, by = 'Sample ID')
+
+metadata$ReadCount <- unlist(lapply(metadata$`Reads (% of lane)`, FUN = function(x){strsplit(x, split = ' ')[[1]][1] %>% gsub(pattern = ',', replacement = '') %>% as.numeric}))
+metadata$ReadPercent  <- unlist(lapply(metadata$`Reads (% of lane)`, FUN = function(x){strsplit(x, split = ' ')[[1]][2] %>% gsub(pattern = '\\(|\\)', replacement = '') %>% as.numeric}))
+
+metadata$AlignCount <- unlist(lapply(metadata$`Aligned (%)`, FUN = function(x){strsplit(x, split = ' ')[[1]][1] %>% gsub(pattern = ',', replacement = '') %>% as.numeric}))
+metadata$AlignPercent  <- unlist(lapply(metadata$`Aligned (%)`, FUN = function(x){strsplit(x, split = ' ')[[1]][2] %>% gsub(pattern = '\\(|\\)', replacement = '') %>% as.numeric}))
+
+metadata$`sense/ antisense` <- as.numeric(metadata$`sense/ antisense`)
+metadata$`rRNA %` <- metadata$`rRNA %` %>% gsub(pattern = '%', replacement = '') %>% as.numeric
+metadata$`Genes Detected` <- metadata$`Genes Detected` %>% gsub(pattern = '%', replacement = '') %>% as.numeric
+
+```
+
+# append experimental info
+```{r}
+exp_info <- read_excel('X:/charliew/RNAseq-Class/documents/conditions.xlsx') %>% as.data.frame()
+metadata <- merge(metadata, exp_info, by.x = 'Sample name', by.y = 'concatenated names')
+metadata <- metadata[order(metadata$`Sample ID`),]
+```
+
+
+# write metadata to file
+```{r}
+setwd(metadata_dir)
+write.csv(metadata, 'metadata.csv', row.names = FALSE)
+```
+
+# plot and save metadata figures
+```{r}
+setwd(metadata_dir)
+
+# read percent distribution (within flow cell)
+ggplot(metadata, mapping = aes(x = `Project ID`,y = ReadPercent, fill = `Project ID`)) + geom_violin() + ggtitle('Read Percent Distribution')
+ggsave('readPercent.pdf')
+
+# read count distribution
+ggplot(metadata, mapping = aes(x = `Project ID`,y = ReadCount, fill = `Project ID`)) + geom_violin() + ggtitle('Read Count Distribution')
+ggsave('readCount.pdf')
+
+# alignment percent distribution
+ggplot(metadata, mapping = aes(x = `Project ID`,y = AlignPercent, fill = `Project ID`)) + geom_violin() + ggtitle('Align Percent Distribution')
+ggsave('AlignPercent.pdf')
+
+# alignment percent distribution in boxplot
+metadata %>%
+  group_by(`Project ID`) %>%
+  mutate(outlier = is_outlier(AlignPercent)) %>% 
+  mutate(name = ifelse(outlier, `Sample ID`, as.numeric(NA))) %>%
+  ggplot(., aes(x = `Project ID`, y = AlignPercent, fill = `Project ID`)) +
+  geom_boxplot() +
+  # geom_text(aes(label = outlier), na.rm = TRUE, hjust = -0.3) +
+  geom_label_repel(aes(label = name)) + ggtitle('Align Percent Distribution')
+ggsave('AlignPercent_box.pdf')
+
+# alignment count
+ggplot(metadata, mapping = aes(x = `Project ID`,y = AlignCount, fill = `Project ID`)) + geom_violin() + ggtitle('Align Count Distribution')
+ggsave('AlignCount.pdf')
+
+# sense / antisense ratio
+ggplot(metadata, mapping = aes(x = `Project ID`,y = `sense/ antisense`, fill = `Project ID`)) + geom_violin() + ggtitle('Sense/Antisense Distribution')
+ggsave('SenseAntisense.pdf')
+
+# rRNA contamination percent
+ggplot(metadata, mapping = aes(x = `Project ID`,y = `rRNA %`, fill = `Project ID`)) + geom_violin() + ggtitle('rRNA Contamination Percent Distribution')
+ggsave('rRNAPercent.pdf')
+
+# rRNA contamination percent
+metadata %>%
+  group_by(`Project ID`) %>%
+  mutate(outlier = is_outlier(`rRNA %`)) %>% 
+  mutate(name = ifelse(outlier, `Sample ID`, as.numeric(NA))) %>%
+  ggplot(., aes(x = `Project ID`, y = `rRNA %`, fill = `Project ID`)) +
+  geom_boxplot() +
+  # geom_text(aes(label = outlier), na.rm = TRUE, hjust = -0.3) +
+  geom_label_repel(aes(label = name)) + ggtitle('rRNA Contamination Percent Distribution')
+ggsave('rRNAPercent_box.pdf')
+
+# genes detected
+metadata %>%
+  group_by(`Project ID`) %>%
+  mutate(outlier = is_outlier(`Genes Detected`)) %>% 
+  mutate(name = ifelse(outlier, `Sample ID`, as.numeric(NA))) %>%
+  ggplot(., aes(x = `Project ID`, y = `Genes Detected`, fill = `Project ID`)) +
+  geom_boxplot() +
+  # geom_text(aes(label = outlier), na.rm = TRUE, hjust = -0.3) +
+  geom_label_repel(aes(label = `Sample name`)) + ggtitle('Genes Detected Distribution')
+ggsave('GenesDetected.pdf')
+
+
+```
+
+# append experimental info
+```{r}
+metadata <- read_excel('X:/charliew/RNAseq-Class/metadata/metadata.xlsx') %>% as.data.frame()
+```
+
+# salmon script generations (single end)
+```{r}
+library(dplyr)
+library(readxl)
+
+setwd(salmon_dir)
+
+n_samp <- nrow(metadata)
+# samp_prefix <- '210909Yil_D21-2801'
+
+files <- list.files(data_dir)
+
+# setup salmon command file
+salmon_file <- 'salmon_.sh'
+
+## salmon paired end setup
+##  setup sh file
+
+salmon_setup <- '#!/bin/bash
+#SBATCH -N 1                      # Number of nodes. You must always set -N 1 unless you receive special instruction from the system admin
+#SBATCH -n 16                      # Number of CPUs. Equivalent to the -pe whole_nodes 1 option in SGE
+#SBATCH --mail-type=END           # Type of email notification- BEGIN,END,FAIL,ALL. Equivalent to the -m option in SGE 
+#SBATCH --mail-user=dpradhan@mit.edu  # Email to which notifications will be sent.
+
+module add salmon/1.3.0
+
+'
+write(salmon_setup,file = salmon_file)
+
+# append commands for individual data files for salmon
+salmon_single_end_command <- "salmon --no-version-check quant --gcBias --validateMappings --incompatPrior 0.0 -i [alignment_target] -l [lib] -r [path_base][sample_file] -p 8 -o [sample_name].quant"
+salmon_paired_end_command <- "salmon --no-version-check quant --gcBias --validateMappings --incompatPrior 0.0 -i [alignment_target] -l [lib] -1 [sample_1_file] -2 [sample_2_file] -p 8 -o [sample_name].quant"
+lib <- 'A'
+# salmon --no-version-check quant --validateMappings --incompatPrior 0.0 -i [alignment_target] -l [library type] -1 [sample_1_file] -2 [sample_2_file] -p 8 -o outputfile<-[sample_name].quant
+path_base <- '/net/ostrom/data/bcc/charliew/RNAseq-Class/data/'
+
+for (i in files){
+  # sample_name <- paste0(samp_prefix, sprintf("%02d", i))
+  sample_file <- i
+  sample_name <- i %>% gsub(pattern = '_NA_sequence.fastq', replacement = '', x = .)
+  # sample_1_file <- paste0(path_base, sample_name, '_1_sequence.fastq')
+  # sample_2_file <- paste0(path_base, sample_name, '_2_sequence.fastq')
+  
+  # full_command <- paste0("salmon --no-version-check quant --validateMappings --incompatPrior 0.0 -i ", alignment_target,
+  #                        " -l A -1 ", sample_1_file, " -2 ", sample_2_file, " -p 8 -o ", sample_name,".quant") # previously A, changed to ISR after running
+  # full_command <- paste0("salmon --no-version-check quant --gcBias --validateMappings --incompatPrior 0.0 -i ", alignment_target,
+  #                        " -l A -r ", path_base, sample_file, " -p 8 -o ", sample_name,".quant") # previously A, changed to ISR after running
+  command <- salmon_single_end_command %>% gsub(pattern = '[alignment_target]', replacement = alignment_target) %>%
+    gsub('lib', replacement = lib) %>%
+    gsub('[path_base]', replacement = path_base) %>%
+    gsub('[sample_file]', replacement = sample_file) %>%
+    gsub('[sample_name]', replacement = sample_name)
+  # print(full_command)
+  write(full_command,file=salmon_file,append=TRUE)
+}
+```
+
+## build second salmon output table after running salmon
+```{r}
+library(rjson)
+
+setwd(salmon_dir)
+salmon_data <- c()
+
+# read data in json file from each .quant folder
+for (i in list.dirs(salmon_dir,recursive = FALSE)){
+  # sample_name <- metadata$`Sample ID`[i] %>% gsub(pattern = '-5349R', replacement = '', x = .) #paste0(samp_prefix, sprintf("%03d", i))
+  sample_name <- i %>% strsplit(., split = '\\/') %>% unlist() %>% 
+    grep(pattern = '.quant', value = TRUE) %>% 
+    gsub(pattern = '.gz.quant', replacement = '', .)
+  # salmon_output <- paste0(salmon_dir, metadata$`Project ID`[i], "_", sample_name, '.quant/lib_format_counts.json') %>% fromJSON(file = .) %>% as.data.frame
+  salmon_output <- paste0(i, '/lib_format_counts.json') %>% fromJSON(file = .) %>% as.data.frame
+  # row.names(salmon_output) <- sample_name
+  
+  salmon_data[[sample_name]] <- salmon_output
+  
+}
+
+# organize data into a table
+df <- do.call(rbind.data.frame, salmon_data)
+write.csv(df, file = 'lib_format_count_summary.csv')
+
+```
+# set up samples file
+```{r}
+setwd(salmon_dir)
+
+folders <- list.dirs(recursive = FALSE) %>% gsub(pattern = './', replacement = '')
+sample <- folders %>% gsub(pattern = '.quant', replacement = '')
+condition <- metadata$Condition #metadata$`Sample name`[order(metadata$`Sample ID`)] #metadata$Group[,] # %>% strsplit(x = ., split = ' ') %>% sapply(., '[[', 1)
+sample_file <- data.frame(Sample = sample, Folder = folders, Condition = condition)
+
+write.xlsx(sample_file, file = "samples.xlsx")
+```
+
+
+# load libraries for tximport
+```{r}
+library(tximport)
+library(edgeR)
+library(openxlsx)
+library(readxl)
+library(readr)
+```
+
+
+# run tximport
+```{r}
+setwd(salmon_dir)
+
+data <- salmon_process(dir = getwd(), tx_to_gene_file = tx2genefile, DGE = FALSE, output = TRUE)
+txi <- data$txi
+salmon_dat <- data$data
+```
+```{r}
+saveRDS(txi, file = 'txi.RDS')
+# saveRDS(saml, file = 'txi.RDS')
+```
+
+
+# process tximport output
+```{r}
+setwd(salmon_dir)
+
+salmon_data <- salmon_dat #read.table("summarized.txt", header = TRUE)
+
+id2type2sym <- read.xlsx(id2symfile)
+# HuMo_Orthology <- read.xlsx(orthologyfile)
+
+#a subset of Mouse ensembl gene IDs have more than one assigned gene symbol
+#these are ambiguous annotations and may potentially confound downstream analyses
+#remove tehm from the annotation file
+# mm10_id2type2sym <- mm10_id2type2sym %>% filter(!Gene.stable.ID %in% c("ENSMUSG00000094121","ENSMUSG00000096271", "ENSMUSG00000115016"))
+#attach gene type and symbol data to the expression file
+salmon_dat_named <- merge(salmon_data, id2type2sym, by.x="geneid", by.y = "Gene.stable.ID", all.x = FALSE)
+#calculate row average and variance and join to the data
+salmon_dat_named <- salmon_dat_named %>% mutate(l2tpmAv = rowMeans(dplyr::select(salmon_dat_named,contains(".l2tpm"))))
+salmon_dat_named <- salmon_dat_named %>% mutate(l2tpmVar =rowVars(as.matrix(dplyr::select(salmon_dat_named,contains(".l2tpm")))))
+#calculate overall average and variance and assign Yes/No Max Per Gene (MPG) flag
+salmon_dat_named <- calculate_MPG(salmon_dat_named, "HGNC.symbol", avg_col = 'l2tpmAv', var_col = 'l2tpmVar', count_cols = '.l2tpm', mpg_col = 'MPG')
+
+#annotate expression data with Human Ortholog
+# salmon_dat_named <- add_orthology(salmon_dat_named, HuMo_Orthology,
+#                                   match_column = 'MGI.symbol', orthology_name = 'HuSym',
+#                                   ref_col = 2, orth_col = 1)
+#add huMPG column
+# salmon_dat_named <- calculate_MPG(salmon_dat_named, "HuSym", count_cols = '.l2tpm', mpg_col = 'huMPG')
+
+salmon_dat_named <- salmon_dat_named %>% mutate(LowAvg = l2tpmAv <= 1)
+salmon_dat_named <- salmon_dat_named %>% mutate(LowVar = l2tpmVar <= 0.1)
+
+write.xlsx(salmon_dat_named, file="salmon_data.xlsx")
+```
+
+# read in files
+```{r}
+metadata <- read.csv(file = paste0(metadata_dir, 'metadata.csv'))
+salmon_dat_named <- read_excel(paste0(salmon_dir, 'salmon_data.xlsx')) %>% as.data.frame()
+```
+
+# filter
+```{r}
+rm_idx <- union(grep(pattern = 'Paneth', colnames(salmon_dat_named)), grep(pattern = 'Aged_HPD_1_GFP low', colnames(salmon_dat_named)))
+salmon_dat_named <- salmon_dat_named[,-rm_idx]
+
+rm_idx <- union(grep(pattern = 'Paneth', metadata$Sample.name), grep(pattern = 'Aged_HPD_1_GFP low', metadata$Sample.name))
+metadata <- metadata[-rm_idx,]
+
+## swap Cps1_WT_6_GFP high and Cps1_WT_6_GFP low
+Cps1_WT_6_GFPlow_idxs <- grep('210909Yil_D21-280162', colnames(salmon_dat_named))
+colnames(salmon_dat_named)[Cps1_WT_6_GFPlow_idxs] <- colnames(salmon_dat_named)[Cps1_WT_6_GFPlow_idxs] %>%
+  gsub(pattern = 'GFP high', replacement = 'GFP low', x = .)
+
+Cps1_WT_6_GFPhigh_idxs <- grep('210909Yil_D21-280163', colnames(salmon_dat_named))
+colnames(salmon_dat_named)[Cps1_WT_6_GFPhigh_idxs] <- colnames(salmon_dat_named)[Cps1_WT_6_GFPhigh_idxs] %>%
+  gsub(pattern = 'GFP low', replacement = 'GFP high', x = .)
+
+```
+
+# add sample names and groups to metadata for DESeq
+```{r}
+setwd(deseq_dir)
+
+sample_names <- colnames(salmon_dat_named) %>% grep('intCt', x=., value = TRUE) %>% gsub('\\.intCt','', x = .)
+metadata$name <- sample_names
+# metadata$group <- strsplit(metadata$name %>% as.character(), split = '\\.') %>% sapply(., "[[", 1) %>% as.factor
+
+```
+
+# heatmap
+```{r}
+setwd(figure_dir)
+
+heatmap_dat <- salmon_dat_named[which(salmon_dat_named$MPG == 'Yes' & salmon_dat_named$LowAvg == FALSE & salmon_dat_named$LowVar == FALSE),
+                                grep('intCt$', colnames(salmon_dat_named))] %>% as.matrix()
+# %>% rename_at(colnames(.), ~ metadata$`Sample name`[order(metadata$Sample.ID)])
+pdf(file = "heatmap.pdf",   # The directory you want to save the file in
+    width = 20, # The width of the plot in inches
+    height = 30)
+Heatmap(heatmap_dat, column_names_side = 'top', row_names_gp = gpar(fontsize = 6), column_names_gp = gpar(fontsize = 9), 
+        name = 'l2cpm',
+        rect_gp = gpar(col = "white", lwd = 0.01),
+        column_title = '')
+dev.off()
+```
+
+# pca
+```{r}
+setwd(figure_dir)
+
+pca <- salmon_dat_named[which(salmon_dat_named$MPG == 'Yes' & salmon_dat_named$LowAvg == FALSE & salmon_dat_named$LowVar == FALSE),] %>% 
+  full_pca(., gene_col = 'HGNC.symbol')
+# var <- samples$treatment
+rownames(pca$x) <- gsub(pattern = '.l2tpm', replacement = '', x = rownames(pca$x))
+# PC <- merge(pca$x, metadata, by=0) #data.frame(pca$x, var=var)
+PC <- cbind(pca$x, metadata[order(metadata$Sample),])
+ggplot(PC,aes(x=PC1,y=PC2, color = paste(Condition)))+
+  geom_point(size=3)+
+  theme_classic()+ggtitle('PCA')
+ggsave(filename = 'PCA_1_2.pdf', width = 15, height = 10)
+```
+
+# Individual Gene check
+```{r}
+gene <- 'Selenop'
+
+intCt <- salmon_dat_named[which(salmon_dat_named$MGI.symbol == gene) ,grepl('\\.intCt', colnames(salmon_dat_named))]
+l2tpm <- salmon_dat_named[which(salmon_dat_named$MGI.symbol == gene) ,grepl('\\.l2tpm', colnames(salmon_dat_named))]
+
+print(paste(dim(intCt)[1], dim(l2tpm)[1]))
+
+df <- data.frame(intCt = unlist(intCt), l2tpm = unlist(l2tpm), Name = names(intCt) %>% strsplit(., split = '\\.') %>% lapply(., '[[', 1) %>% unlist())
+
+data <- data.frame(Name = metadata$Sample.name,
+                      Diet = metadata$Diet, 
+                      `Cell type` = metadata$Cell.type, Genotype = metadata$Genotype,
+                      Age = metadata$Age, Replicate =metadata$Replicate,
+                      Group = metadata$Group)
+data <- merge(data, df, by = 'Name')
+
+ggplot(data, mapping = aes(x = Group, y = intCt, color = Genotype)) + geom_boxplot() +
+  theme_classic() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle(gene)
+
+ggplot(data, mapping = aes(x = Group, y = l2tpm, color = Genotype)) + geom_boxplot() +
+  theme_classic() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle(gene)
+
+ggplot(data, mapping = aes(x = Name, y = l2tpm, color = Group)) + geom_line() + geom_point() +
+  theme_classic() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) +
+  ggtitle(gene)
+
+```
+
+# setup DESeq object and write metadata
+```{r}
+setwd(metadata_dir)
+
+data <- salmon_dat_named
+data <- data[-which(duplicated(data$geneid)),]
+
+cnts <- data[,grepl('intCt', colnames(data))]
+colnames(cnts) <- gsub('\\.intCt','', colnames(cnts))
+colnames(cnts) <- colnames(cnts) %>% gsub(pattern = '150930AmoA_D15-', replacement = 'd',.) %>% gsub(pattern = '.gz', replacement = '',.)
+rownames(cnts) <- data$geneid
+
+l2tpm <- data[,grepl('\\.l2tpm', colnames(data))]
+colnames(l2tpm) <- gsub('\\.l2tpm','', colnames(l2tpm))
+colnames(l2tpm) <- colnames(l2tpm) %>% gsub(pattern = '150930AmoA_D15-', replacement = 'd',.) %>% gsub(pattern = '.gz', replacement = '',.)
+rownames(l2tpm) <- data$geneid
+
+samples <- data.frame(row.names = metadata$Sample, 
+                      Condition = metadata$Condition %>% as.factor)
+
+```
+
+# heatmap for plotting gene sets
+```{r}
+# setwd(figure_dir)
+# salmon_dat_named <- read_excel(paste0(salmon_dir, 'salmon_data.xlsx')) %>% as.data.frame()
+
+gene_set <- c('Ide', 'Lgr5', 'Als2')
+
+heatmap_dat <- salmon_dat_named[which(salmon_dat_named$MPG == 'Yes' & salmon_dat_named$MGI.symbol %in% gene_set),]
+rownames(heatmap_dat) <- heatmap_dat$MGI.symbol
+heatmap_dat <- heatmap_dat[,grep('l2tpm$', colnames(salmon_dat_named))] %>% as.matrix()
+colnames(heatmap_dat) <- colnames(heatmap_dat) %>% strsplit(., split = '\\.') %>% lapply(., '[[', 1) %>% unlist()
+# pdf(file = "Feeding_Heatmap.pdf",   # The directory you want to save the file in
+#     width = 10, # The width of the plot in inches
+#     height = 20)
+Heatmap(heatmap_dat, column_names_side = 'top', row_names_gp = gpar(fontsize = 6), column_names_gp = gpar(fontsize = 9), 
+        name = 'l2cpm',
+        rect_gp = gpar(col = "white", lwd = 0.15),
+        column_title = '')
+# dev.off()
+```
+
+
+# set DESeq comparisons: Rev v G
+```{r}
+library(apeglm)
+setwd(deseq_dir)
+
+exp_cnts <- cnts
+exp_l2tpm <- l2tpm
+exp_samples <- samples#[colnames(exp_cnts),]
+exp_samples$Condition <- relevel(exp_samples$Condition, "Rev")
+
+date <- gsub(pattern = '-', replacement = '_', x = Sys.Date())
+dir.create(file.path(deseq_dir, date))
+
+setwd(paste0(deseq_dir, date))
+write_metadata_record(design = design, metadata_samples = exp_samples,
+                      annotation_file = tx2genefile, orthology_file = orthologyfile, infosite_file = infosite_loc,
+                      sample_file_name = 'samples.csv')
+
+all(colnames(cnts) == rownames(samples)) %>% print()
+
+design <- ~Condition
+
+# dds <- DESeqDataSetFromMatrix(exp_cnts, colData=exp_samples, design)
+dds <- DESeqDataSetFromTximport(txi, colData = exp_samples, design)
+dds <- DESeq(dds, minReplicatesForReplace = 3)
+print(exp_samples)
+resultsNames(dds) %>% print()
+
+```
+# pca
+```{r}
+setwd(figure_dir)
+pca <- full_pca_deseq(dds)
+# var <- samples$treatment
+# rownames(pca$x) <- gsub(pattern = '.l2tpm', replacement = '', x = rownames(pca$x))
+# PC <- merge(pca$x, metadata, by=0) #data.frame(pca$x, var=var)
+all(rownames(pca$x) == rownames(exp_samples))
+PC <- cbind(pca$x, exp_samples)
+ggplot(PC,aes(x=PC1,y=PC2, color = Group))+
+  geom_point(size=3)+
+  xlab(paste0('PC1 (', pca$percentVar[1], '%)')) + ylab(paste0('PC2 (', pca$percentVar[2], '%)')) +
+  theme_classic()+ggtitle('PCA')
+ggsave(filename = 'Feeding_PCA_1_2.pdf', width = 8, height = 6)
+```
+# heatmap
+```{r}
+setwd(figure_dir)
+
+heatmap_dat <- exp_l2tpm[which(salmon_dat_named$MPG == 'Yes' & salmon_dat_named$LowAvg == FALSE & 
+                                 salmon_dat_named$LowVar == FALSE & salmon_dat_named$Gene.type == "protein_coding"),]%>% as.matrix()
+pdf(file = "Feeding_Heatmap.pdf",   # The directory you want to save the file in
+    width = 10, # The width of the plot in inches
+    height = 20)
+Heatmap(heatmap_dat, column_names_side = 'top', row_names_gp = gpar(fontsize = 6), column_names_gp = gpar(fontsize = 9), 
+        name = 'l2cpm',
+        rect_gp = gpar(col = "white", lwd = 0.15),
+        column_title = '')
+dev.off()
+```
+
+# run DESeq comparisons
+```{r}
+setwd(paste0(deseq_dir, date))
+
+comparisons <- c(2)
+
+for (i in comparisons){
+  # res_norm <- lfcShrink(dds, coef=i, type="normal")
+  res_ape <- lfcShrink(dds, coef=i, type="apeglm")
+  
+  # normData <- as.data.frame(res_norm)
+  apeData <- as.data.frame(res_ape)
+  
+  # normData <- normData %>% rename(
+  #   norm.baseMean = baseMean,
+  #   norm.logFC = log2FoldChange,
+  #   norm.lfcSE = lfcSE,
+  #   norm.stat = stat,
+  #   norm.p = pvalue,
+  #   norm.adp = padj
+  # )
+  # 
+  # apeData <- apeData %>% rename(
+  #   ape.baseMean = baseMean,
+  #   ape.logFC = log2FoldChange,
+  #   ape.lfcSE = lfcSE,
+  #   ape.p = pvalue,
+  #   ape.adp = padj
+  # )
+  # 
+  compar_name <- resultsNames(dds)[i]
+  write(compar_name, file = 'run_record.txt', append = TRUE)
+  stat_col <- paste('WaldStatistic', compar_name, sep = '_')
+  stat <- dds@rowRanges@elementMetadata[,stat_col]
+  
+  res <- as.data.frame(res_ape)
+  res$stat <- stat
+  res <- cbind(geneid = rownames(res), res)
+  # results <- merge(normData, apeData, by=0, all=TRUE)
+  # write.csv(as.data.frame(res_norm), file=paste('NK_',compar_name, '_norm.csv', sep = ''))
+  # write.csv(as.data.frame(res), file=paste(compar_name, '_results.tsv', sep = ''))
+  write.table(as.data.frame(res), file=paste(compar_name, '_results.tsv', sep = ''), quote=FALSE, sep="\t", row.names = FALSE)
+}
+
+```
+
+
+# process DESeq2 output (updated)
+```{r}
+setwd(paste0(deseq_dir, '2022_01_23/'))
+num_base_cols <- dim(salmon_dat_named)[2]
+result_files <- list.files(recursive = TRUE) %>% grep(pattern = '_results.tsv', ., value = TRUE)
+deseq_data <- aggregate_deseq_results(result_files = result_files, count_data = salmon_dat_named)
+deseq_data <- arrange_deseq_results(deseq_data, base_cols = 1:num_base_cols) #merge(count_data, compar, by = 'geneid')
+write.csv(deseq_data, file = '150930Amo.csv', row.names = FALSE)
+
+```
+
+# read in deseq data
+```{r}
+setwd(paste0(deseq_dir, '2021_11_08/'))
+deseq_data <- read.csv('210909Yil_CpsKO.csv')
+```
+
+
+# plot volcano 
+```{r}
+setwd(figure_dir)
+options(ggrepel.max.overlaps = Inf)
+
+data <- deseq_data[which(deseq_data$MPG == 'Yes' & !deseq_data$LowAvg & !deseq_data$LowVar & deseq_data$Gene.type == "protein_coding"),]
+
+comparisons <- c('Condition_G_vs_Rev')
+
+for (i in comparisons){
+  volcano_plot(data, comparison = i, 
+             adp_identifier = 'padj', lfc_identifier = 'log2FoldChange', 
+             gene_column = "HGNC.symbol")
+  ggsave(filename = paste0(i, '.pdf'), width = 8, height = 8)
+}
+
+# lfc_compar_plot(data, comparisons = c('Group_Aged_HPD_GFP.high_vs_Aged_Control_GFP.high', 'Group_Aged_HPD_GFP.low_vs_Aged_Control_GFP.low'), 
+#              adp_identifier = 'padj', lfc_identifier = 'log2FoldChange', 
+#              gene_column = "HGNC.symbol")
+# ggsave(filename = paste0('COndition', '.pdf'), width = 8, height = 8)
+
+
+```
+# plot volcano (Cps KO)
+```{r}
+setwd(paste0(figure_dir, 'CpsKO/'))
+options(ggrepel.max.overlaps = Inf)
+
+data <- deseq_data[which(deseq_data$MPG == 'Yes'),] # & !deseq_data$LowAvg & !deseq_data$LowVar & deseq_data$Gene.type == "protein_coding"
+
+comparisons <- c("Group_F_Cps_iKO_GFP.high_vs_Cps_WT_GFP.high","Group_F_Cps_iKO_GFP.low_vs_Cps_WT_GFP.low",
+                 "Group_M_Cps_iKO_GFP.high_vs_Cps_WT_GFP.high", "Group_M_Cps_iKO_GFP.low_vs_Cps_WT_GFP.low",
+                 "GroupSex_Cps_iKO_GFP.high_vs_Cps_WT_GFP.high", "GroupSex_Cps_iKO_GFP.low_vs_Cps_WT_GFP.low", "Sex_M_vs_F")
+
+for (i in comparisons){
+  volcano_plot(data, comparison = i, 
+             adp_identifier = 'padj', lfc_identifier = 'log2FoldChange', 
+             gene_column = "MGI.symbol")
+  ggsave(filename = paste0(i, '.pdf'), width = 8, height = 8)
+}
+
+```
+
+# prep IPA and GSEA files
+```{r}
+setwd(gsea_dir)
+
+prepare_GSEA_rnk_files_direct(deseq_data, gene_sym = '# HGNC', gene_id_col = "HuSym")
+# ipa_data <- format_IPA_data(stat_data, gene_col = 'HGNC symbol')
+# write.csv(ipa_data, file = 'ipa_data.csv')
+```
+
+```{r}
+setwd(gsea_dir)
+
+rnk_files <- list.files() %>% grep('.rnk', ., value = TRUE)
+comparisons <- rnk_files %>% gsub(pattern = '.rnk', replacement = '')
+collections <- c('h', 'c2cp','c5cc','c5mf','c5bp','c2cgp','c8')
+
+gsea_data <- summarize_GSEA_output(directory = 'oct19/', comparisons = comparisons, gene_collections = collections)
+write.csv(gsea_data, file = '210909Yil_gsea.csv', row.names = FALSE)
+
+```
+

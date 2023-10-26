@@ -1,0 +1,6 @@
+"0","all.iqr <- as.data.frame(sapply(all.n.l2, IQR))"
+"0","all.med <- as.data.frame(sapply(all.n.l2, median))"
+"0","all.0 <- as.data.frame(colSums(all.n.l2 == 0))"
+"0","all.stats <- cbind(all.0,all.med,all.iqr)"
+"0",""
+"0","write.xlsx(all.stats, file=""all.stats.xlsx"", overwrite = TRUE, rowNames=TRUE)"

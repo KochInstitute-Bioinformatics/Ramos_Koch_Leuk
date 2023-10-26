@@ -1,0 +1,6 @@
+"0","ggpairs(validation.FCs, "
+"0","        columns = 1:6, "
+"0","        title = ""Validation Screen Pairwise Correlation Plot"", "
+"0","        lower = list(continuous = ""cor"", wrap = list(method = ""pearson"", size = 4)),"
+"0","        upper = list(continuous = ""smooth"", wrap = list(method = ""lm"", size = 3)),"
+"0","        diag = list(continuous = ""densityDiag"", wrap = list(fill = ""#69b3a2"")))"

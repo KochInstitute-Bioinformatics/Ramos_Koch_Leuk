@@ -1,0 +1,3 @@
+"0","qcObject <- merge(x=importedNames,y=List.Stats, by.x='Folder.Obj.File_Index',by.y='Folder.Obj.File_Index', all=TRUE)"
+"0","qcObject <- merge(x=qcObject,y=poolSummary, by.x='Folder.Obj.File_Index',by.y='Folder.Obj.File_Index', all=FALSE,all.x=TRUE)"
+"0","write.xlsx(qcObject,file=""qcObject_plusRH.xlsx"")"

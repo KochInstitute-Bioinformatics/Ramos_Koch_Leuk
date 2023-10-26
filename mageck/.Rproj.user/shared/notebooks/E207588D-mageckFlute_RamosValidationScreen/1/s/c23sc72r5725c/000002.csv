@@ -1,0 +1,7 @@
+"0","#cw.geneLevel.FCs <- Mageck.combined %>% "
+"0","#  dplyr::select(id,SP.10m.Score,ET.1.2.Score,ET.1.10.Score)"
+"0",""
+"0","# Adding in BM samples"
+"0","cw.geneLevel.FCs <- Mageck.combined %>% "
+"0","  dplyr::select(id,SP.10m.Score,BM.15m.Score,BM.10m.Score,ET.1.2.Score,ET.1.10.Score)"
+"0",""

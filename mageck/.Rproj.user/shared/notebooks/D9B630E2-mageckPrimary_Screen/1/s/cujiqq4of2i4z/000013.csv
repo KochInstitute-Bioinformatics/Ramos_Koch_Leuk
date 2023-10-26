@@ -1,0 +1,7 @@
+"0","geneLevel.annotated <- merge(geneLevel,GeneSymWhitelist,by.x = 'id', by.y = 'GeneSym',all=TRUE)"
+"0","geneLevel.annotated <- merge(geneLevel.annotated,biocarta.ifng,by.x = 'id', by.y = 'Gene',all=TRUE)"
+"0","geneLevel.annotated <- merge(geneLevel.annotated,hallmark.ifng,by.x = 'id', by.y = 'Gene',all=TRUE)"
+"0","geneLevel.annotated <- merge(geneLevel.annotated,mmKEGG.toJoin,by.x = 'id', by.y = 'MmSym',all=TRUE)"
+"0","geneLevel.annotated.whitelist <- geneLevel.annotated %>% dplyr::filter(geneSym.whitelist == ""Yes"")"
+"0",""
+"0","#write.xlsx(geneLevel.annotated, file=""cw.geneLevel.annotated.xlsx"", overwrite = TRUE, rowNames=TRUE)"

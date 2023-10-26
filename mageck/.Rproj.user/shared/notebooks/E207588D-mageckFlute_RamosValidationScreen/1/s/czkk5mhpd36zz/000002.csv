@@ -1,0 +1,3 @@
+"0","validation.FCs <- Mageck.combined %>% dplyr::select(""id"",ends_with(""Score""))"
+"0","validation.FCs <- validation.FCs %>% mutate_all(~ifelse(is.na(.), 0, .))"
+"0","validation.FCs <- validation.FCs %>% column_to_rownames(var=""id"")"

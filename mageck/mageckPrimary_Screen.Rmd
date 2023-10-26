@@ -1,0 +1,1136 @@
+---
+title: "Data table preparation and MAGEcK Analysis for B-ALL"
+author: "Charlie Whittaker"
+date: "1/23/2023"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 2
+  html_notebook: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(tidy=FALSE, cache=TRUE,
+                      dev="png", message=FALSE, error=FALSE, warning=TRUE)
+```
+
+# Load libraries
+
+```{r, warning=FALSE,error=FALSE,message=FALSE}
+library(openxlsx)
+library(ggplot2)
+library(tidyverse)
+library(cowplot)
+library(VennDiagram)
+library(ggVennDiagram)
+library(reprex)
+library(matrixStats)
+library(XML)
+library(ggrepel)
+library(ggpubr)
+library(GGally)
+library(DESeq2)
+library(apeglm)
+library(ComplexHeatmap)
+library(dplyr)
+library(readxl)
+library(readr)
+library(tximport)
+library(edgeR)
+library(MAGeCKFlute)
+library(gprofiler2)
+library(clusterProfiler)
+library(fgsea)
+```
+
+# Import local code
+
+```{r}
+source('Rcode/data_formatting_tools.R')
+source('Rcode/analysis_tools.R')
+source('Rcode/plots.R')
+source('Rcode/common.R')
+source('Rcode/ssGSEAProjection.Library.R')
+source('Rcode/gostplot_v2.R')
+```
+
+# Reading data
+
+## Barcode Annotation file
+
+This file is similar to sgRNAs but has some additional information
+
+This can be adjusted in various ways. For example, when count of GeneSym is greater than 1, output will include results that are not official symbols.
+
+```{r}
+BarcodeAnnotations <- read_excel("BarcodeAnnotations.xlsx")
+GeneSymWhitelist.selection <- BarcodeAnnotations %>% filter(NegativeControlGroup == 'No' & 
+                                                    CountOfGeneSym <= 1 & 
+                                                    GeneTargetInMultiplePools == 'No' &
+                                                    between(BarcodesPerGene, 3,4))
+
+GeneSymWhitelist <- unique(GeneSymWhitelist.selection %>% select(GeneSym,Pool)) %>% mutate(geneSym.whitelist = 'Yes')
+#write.xlsx(GeneSymWhitelist,file='GeneSymWhitelist.xlsx')
+```
+
+## Read in sgRNA annotation file
+
+This is used in the processing of the counts- files
+
+```{r}
+sgRNAs <- read.xlsx("../sgRNA_to_Gene_stock_plusPool.xlsx")
+sgRNAs.gene <- sgRNAs %>% select(c("Barcode.Sequence","GeneSym","Pool"))
+```
+
+## Essential Genes
+
+```{r}
+hart <- read.xlsx("../Documents/hart_essential_MGI.xlsx")
+essentialGenes <- read_xlsx("../Documents/essential_genes_combined_mouseSyms.xlsx")
+```
+
+## Mouse Gene to KEGG 
+
+The human MsigDB Kegg GMT file was combined with MGI mouse to human orthogy data to build a table that associates mouse symbols with a yes/no
+KEGG flag. This will allow us to highlight genes associated with some KEGG term in later plots.
+
+```{r}
+mmKEGG <- read_excel("../Documents/Mm_GeneSym_KEGG_association.xlsx")
+mmKEGG.toJoin <- mmKEGG %>% select(MmSym,KEGG_Flag) %>% filter(KEGG_Flag == 'yes')
+```
+
+## Import IFNG sets
+
+```{r}
+biocarta.ifng <-read_excel("../Documents/BIOCARTA_IFNG_PATHWAY.xlsx")
+hallmark.ifng <-read_excel("../Documents/HALLMARK_INTERFERON_GAMMA_RESPONSE.xlsx")
+```
+
+## Useful functions
+
+```{r}
+rowCount <- function(dat.table){
+  as.data.frame(sapply(dat.table, length))
+}
+
+p1log2 <- function(dat.table){
+  log2(dat.table+1)
+}
+
+summarizePool <- function(tt){
+  tt <- merge(x=tt,y=sgRNAs.gene, by.x=c("Construct.Barcode"),by.y=c("Barcode.Sequence"), all=FALSE, all.x=TRUE)
+  poolOut <-c()
+  for (s in colnames(tt)){
+    tmp <- tt %>% select(c("Construct.Barcode",s,"Pool"))
+    tmp <- tmp %>% filter(!is.na(tmp[,s]))
+    poolCt <- as.data.frame(table(tmp$Pool))
+    poolOut <- rbind(poolOut,cbind(poolCt))
+  }
+  return(poolOut)
+}
+
+read_mageck_output <- function(outbase){
+  print(outbase)
+  assign(paste0(outbase,".gdata"),ReadRRA(paste0(outbase,".gene_summary.txt"), score = c("lfc", "rra")[1]))
+  assign(paste0(outbase,".sdata"),ReadsgRRA(paste0(outbase,".sgrna_summary.txt")))
+}
+
+plot_gdata_volcano <- function(gdata){
+  VolcanoView(gdata, x = "Score", y = "FDR", top = 10,
+                 alpha=1, x_cutoff = log2(1.38), y_cutoff = 0.5,
+                 mycolour = c("darkgrey", "#e41a1c", "#377eb8"),
+                 ylab = "-Log10(FDR)", Label = "id") + ggtitle(i)
+}
+
+plot_essentials <- function(gdata.df){
+  toPlot <- merge(x=gdata.df, y=hart, by.x="id" ,by.y="MGISym", all.x=TRUE)
+  essential <- toPlot %>% filter(toPlot$hart_essential == "Y")
+  degPlot <- ggplot() + 
+    geom_point(data=toPlot, aes(x=Score, y=-log10(FDR)), col="grey") + 
+    geom_point(data=essential, aes(x=Score, y=-log10(FDR)), col="red") + 
+    theme_bw() + theme(panel.border = element_blank(), panel.grid.major = element_blank(), 
+                       panel.grid.minor = element_blank(), axis.line = element_line(colour = "black"))
+  return(degPlot)
+}
+
+vlnplot_essentials <- function(df){
+  Essential.toPlot <- merge(x=df, y=essentialGenes, by.x="id" ,by.y="MGISym", all.x=TRUE)
+  Essential.toPlot <- merge(x=Essential.toPlot, y=GeneSymWhitelist, by.x="id" ,by.y="GeneSym", all.x=TRUE)
+  Essential.toPlot <- Essential.toPlot %>% mutate(Essential = ifelse(is.na(Essential), "No", Essential))
+  Essential.toPlot <- Essential.toPlot %>% dplyr::filter(geneSym.whitelist == "Yes")
+  Essential.toPlot <- Essential.toPlot %>% rename(LFC = Score)
+  data <- Essential.toPlot
+  plot <- ggplot(data, aes(factor(Essential), LFC)) + geom_violin(fill='#A4A4A4') + geom_boxplot(width=.1) + ylim(-2.5, 2.5) +
+    theme_bw() + 
+    theme(plot.title = element_text(size = 8),axis.title.x = element_text(size = 8),axis.title.y = element_text(size = 8))
+  return(plot)
+}
+```
+
+## Importing Screen Count data from Broad files for Re-analysis
+
+```{r}
+dir1 = "../200406/filesTogether/"
+#list.files(dir1,"counts")
+
+dir2 = "../200627/filesTogether/"
+#list.files(dir2,"counts")
+
+dir3 = "../RH_resequenced_counts_files/"
+
+files1 <- list.files(dir1,pattern="counts-*", full.names=TRUE)
+files2 <- list.files(dir2,pattern="counts-*", full.names=TRUE)
+files3 <- list.files(dir3,pattern="counts-*", full.names=TRUE)
+```
+
+```{r}
+ldf.200406 <- lapply(files1, read.delim)
+ldf.200627 <- lapply(files2, read.delim)
+ldf.RH <- lapply(files3, read.delim)
+```
+
+## extract column names for the imported data and build dataframe that associated these values with a folder.object.file Index
+
+```{r}
+importedNames <- c()
+
+for (i in 1:length(ldf.200406)){
+  folder <- "200406"
+  name <- colnames(ldf.200406[[i]])
+  name <- as.data.frame(name)
+  name <- tibble::rownames_to_column(name, "FileIndex")
+  importedNames <- rbind(importedNames,cbind(Fold.Obj=paste0(folder,".",i),name))
+}
+
+for (i in 1:length(ldf.200627)){
+  folder <- "200627"
+  name <- colnames(ldf.200627[[i]])
+  name <- as.data.frame(name)
+  name <- tibble::rownames_to_column(name, "FileIndex")
+  importedNames <- rbind(importedNames,cbind(Fold.Obj=paste0(folder,".",i),name))
+}
+
+for (i in 1:length(ldf.RH)){
+  folder <- "RH"
+  name <- colnames(ldf.RH[[i]])
+  name <- as.data.frame(name)
+  name <- tibble::rownames_to_column(name, "FileIndex")
+  importedNames <- rbind(importedNames,cbind(Fold.Obj=paste0(folder,".",i),name))
+}
+
+importedNames <- importedNames %>% mutate(Folder.Obj.File_Index=paste0(Fold.Obj,".",FileIndex))
+importedNames <- importedNames %>% select(name,Folder.Obj.File_Index)
+```
+
+## calculate medians, row counts and numbers of zeros
+
+```{r}
+List.Stats <- c()
+
+for (i in 1:length(ldf.200406)){
+  folder <- "200406"
+  tmp.df <- mutate_if(ldf.200406[[i]], is.numeric, p1log2)
+  List.Med <- as.data.frame(sapply(tmp.df, median))
+  List.Med <- rename(List.Med, l2.median = `sapply(tmp.df, median)`)
+  List.RowCount <- rowCount(ldf.200406[[i]])
+  List.RowCount <- rename( List.RowCount, Row.Count = `sapply(dat.table, length)`)
+  List.Zeros <- as.data.frame(colSums(ldf.200406[[i]]==0))
+  List.Zeros <- rename(List.Zeros, ZeroCount = `colSums(ldf.200406[[i]] == 0)`)
+  List.RowNumber <- as.data.frame(1:nrow(List.Med))
+  List.RowNumber <- rename(List.RowNumber, FileIndex = `1:nrow(List.Med)`)
+  List.Stats <- rbind(List.Stats,cbind(List.RowNumber,folder,i,List.Med,List.RowCount,List.Zeros))
+}
+
+for (i in 1:length(ldf.200627)){
+  folder <- "200627"
+  tmp.df <- mutate_if(ldf.200627[[i]], is.numeric, p1log2)
+  List.Med <- as.data.frame(sapply(tmp.df, median))
+  List.Med <- rename(List.Med, l2.median = `sapply(tmp.df, median)`)
+  List.RowCount <- rowCount(ldf.200627[[i]])
+  List.RowCount <- rename( List.RowCount, Row.Count = `sapply(dat.table, length)`)
+  List.Zeros <- as.data.frame(colSums(ldf.200627[[i]]==0))
+  List.Zeros <- rename(List.Zeros, ZeroCount = `colSums(ldf.200627[[i]] == 0)`)
+  List.RowNumber <- as.data.frame(1:nrow(List.Med))
+  List.RowNumber <- rename(List.RowNumber, FileIndex = `1:nrow(List.Med)`)
+  List.Stats <- rbind(List.Stats,cbind(List.RowNumber,folder,i,List.Med,List.RowCount,List.Zeros))
+}
+
+for (i in 1:length(ldf.RH)){
+  folder <- "RH"
+  tmp.df <- mutate_if(ldf.RH[[i]], is.numeric, p1log2)
+  List.Med <- as.data.frame(sapply(tmp.df, median))
+  List.Med <- rename(List.Med, l2.median = `sapply(tmp.df, median)`)
+  List.RowCount <- rowCount(ldf.RH[[i]])
+  List.RowCount <- rename( List.RowCount, Row.Count = `sapply(dat.table, length)`)
+  List.Zeros <- as.data.frame(colSums(ldf.RH[[i]]==0))
+  List.Zeros <- rename(List.Zeros, ZeroCount = `colSums(ldf.RH[[i]] == 0)`)
+  List.RowNumber <- as.data.frame(1:nrow(List.Med))
+  List.RowNumber <- rename(List.RowNumber, FileIndex = `1:nrow(List.Med)`)
+  List.Stats <- rbind(List.Stats,cbind(List.RowNumber,folder,i,List.Med,List.RowCount,List.Zeros))
+}
+
+List.Stats <- rename(List.Stats, ObjIndex = `i`)
+List.Stats <- List.Stats %>% mutate(Folder.Obj.File_Index=paste0(folder,".",ObjIndex,".",FileIndex))
+List.Stats <- List.Stats %>% select(Folder.Obj.File_Index,l2.median,Row.Count,ZeroCount)
+```
+
+## Summarize Pool per sample
+
+```{r}
+poolSummary <- c()
+
+for (i in 1:length(ldf.200406)){
+  folder <- "200406"
+  poolCt <- summarizePool(ldf.200406[[i]])
+  poolCt <- tibble::rownames_to_column(poolCt, "FileIndex")
+  poolSummary <- rbind(poolSummary,cbind(Fold.Obj=paste0(folder,".",i),poolCt))
+}
+
+for (i in 1:length(ldf.200627)){
+  folder <- "200627"
+  poolCt <- summarizePool(ldf.200627[[i]])
+  poolCt <- tibble::rownames_to_column(poolCt, "FileIndex")
+  poolSummary <- rbind(poolSummary,cbind(Fold.Obj=paste0(folder,".",i),poolCt))
+}
+
+for (i in 1:length(ldf.RH)){
+  folder <- "RH"
+  poolCt <- summarizePool(ldf.RH[[i]])
+  poolCt <- tibble::rownames_to_column(poolCt, "FileIndex")
+  poolSummary <- rbind(poolSummary,cbind(Fold.Obj=paste0(folder,".",i),poolCt))
+}
+
+poolSummary <- rename(poolSummary, DetectedPool = Var1)
+poolSummary <- poolSummary %>% mutate(Folder.Obj.File_Index=paste0(Fold.Obj,".",FileIndex))
+poolSummary <- poolSummary %>% select(Folder.Obj.File_Index,DetectedPool,Freq)
+```
+
+```{r}
+qcObject <- merge(x=importedNames,y=List.Stats, by.x='Folder.Obj.File_Index',by.y='Folder.Obj.File_Index', all=TRUE)
+qcObject <- merge(x=qcObject,y=poolSummary, by.x='Folder.Obj.File_Index',by.y='Folder.Obj.File_Index', all=FALSE,all.x=TRUE)
+write.xlsx(qcObject,file="qcObject_plusRH.xlsx")
+```
+
+# Building dataframes for mageck testing, running tests and importing results
+
+There are numerous pools and conditions to compare and columns containing the data are scattered in the 91 input files.
+These commands extract, assembly and re-order each set of columns. Data are then exported for mageck testing and results are imported.
+
+# In vitro
+
+## In Vitro Pool A
+
+identify columns with non-0 medians
+
+```{r}
+invitro.poolA.1 <- ldf.200406[[1]][c(1,6,15,16,17,18,19,20)]
+invitro.poolA.2 <- ldf.200406[[7]][c(1,8,9,10,11,12,13,26)]
+invitro.poolA.3 <- ldf.200627[[61]][c(1,3)]
+
+invitro.poolA <- merge(x=invitro.poolA.1,y=invitro.poolA.2, by.x=c("Construct.Barcode"),by.y=c("Construct.Barcode"), all=TRUE)
+invitro.poolA <- merge(x=invitro.poolA,y=invitro.poolA.3, by.x=c("Construct.Barcode"),by.y=c("Construct.Barcode"), all=TRUE)
+invitro.poolA <- merge(x=invitro.poolA,y=sgRNAs.gene, by.x=c("Construct.Barcode"),by.y=c("Barcode.Sequence"), all=FALSE, all.x=TRUE)
+
+col.vit.poolA <- colnames(invitro.poolA)
+```
+
+```{r}
+# reorder columns
+invitro.poolA.reorder <- invitro.poolA[,c(1,17,2,15,
+                                          3,4,5,16,
+                                          6,7,8,
+                                          9,10,11,
+                                          12,13,14)]
+# replace NA values with 0
+invitro.poolA.reorder <- replace(invitro.poolA.reorder, is.na(invitro.poolA.reorder), 0)
+# Write to table for mageck run
+write_delim(invitro.poolA.reorder,file="invitro.poolA.txt", delim = '\t')
+```
+
+### results import and plotting
+
+```{r}
+files.toPlot <- list.files(pattern=glob2rx("invitro.poolA_*gene_summary.txt"), full.names=FALSE)
+files.toPlot <- str_replace(files.toPlot, ".gene_summary.txt", "")
+files.toPlot
+
+for (i in files.toPlot){
+  assign(paste0(i,".gdata"),ReadRRA(paste0(i,".gene_summary.txt"), score = c("lfc", "rra")[1]))
+  assign(paste0(i,".sdata"),ReadsgRRA(paste0(i,".sgrna_summary.txt")))
+}  
+
+for (i in files.toPlot){
+  x <- get(paste0(i,".gdata"))
+  print(plot_gdata_volcano(x))
+}
+```
+
+## In Vitro Pool B
+
+identify columns with non-0 medians
+
+```{r}
+invitro.poolB.1 <- ldf.200406[[4]][c(1,7,21,22,23,25,26)]
+invitro.poolB.2 <- ldf.200406[[9]][c(1,14,15,16,17,18,27)]
+invitro.poolB.3 <- ldf.200627[[63]][c(1,4,5)]
+
+invitro.poolB <- merge(x=invitro.poolB.1,y=invitro.poolB.2, by.x=c("Construct.Barcode"),by.y=c("Construct.Barcode"), all=TRUE)
+invitro.poolB <- merge(x=invitro.poolB,y=invitro.poolB.3, by.x=c("Construct.Barcode"),by.y=c("Construct.Barcode"), all=TRUE)
+#invitro.poolB <- merge(x=invitro.poolB,y=invitro.poolB.4, by.x=c("Construct.Barcode"),by.y=c("Construct.Barcode"), all=TRUE)
+invitro.poolB <- merge(x=invitro.poolB,y=sgRNAs.gene, by.x=c("Construct.Barcode"),by.y=c("Barcode.Sequence"), all=FALSE, all.x=TRUE)
+
+col.vit.poolB <- colnames(invitro.poolB)
+```
+
+```{r}
+# reorder columns
+
+invitro.poolB.reorder <- invitro.poolB[,c(1,16,2,
+                                          13,
+                                          3,4,5,
+                                          6,7,14,
+                                          8,9,10,15,
+                                          11,12)]
+
+# replace NA values with 0
+invitro.poolB.reorder <- replace(invitro.poolB.reorder, is.na(invitro.poolB.reorder), 0)
+
+# Write to table for mageck run
+write_delim(invitro.poolB.reorder,file="invitro.poolB.txt", delim = '\t')
+```
+
+### results import and plotting
+
+```{r}
+files.toPlot <- list.files(pattern=glob2rx("invitro.poolB_*gene_summary.txt"), full.names=FALSE)
+files.toPlot <- str_replace(files.toPlot, ".gene_summary.txt", "")
+files.toPlot
+
+for (i in files.toPlot){
+  assign(paste0(i,".gdata"),ReadRRA(paste0(i,".gene_summary.txt"), score = c("lfc", "rra")[1]))
+  assign(paste0(i,".sdata"),ReadsgRRA(paste0(i,".sgrna_summary.txt")))
+}  
+
+for (i in files.toPlot){
+  x <- get(paste0(i,".gdata"))
+  print(plot_gdata_volcano(x))
+}
+```
+
+## In Vitro Pool C
+
+```{r}
+invitro.poolC.1 <- ldf.200406[[2]][c(1,8,27)]
+invitro.poolC.2 <- ldf.200406[[8]][c(1,3,4,5,6,7,20,21,22,23,24,25)]
+invitro.poolC.3 <- ldf.200406[[10]][c(1,3)]
+
+invitro.poolC <- merge(x=invitro.poolC.1,y=invitro.poolC.2, by.x=c("Construct.Barcode"),by.y=c("Construct.Barcode"), all=TRUE)
+invitro.poolC <- merge(x=invitro.poolC,y=invitro.poolC.3, by.x=c("Construct.Barcode"),by.y=c("Construct.Barcode"), all=TRUE)
+invitro.poolC <- merge(x=invitro.poolC,y=sgRNAs.gene, by.x=c("Construct.Barcode"),by.y=c("Barcode.Sequence"), all=FALSE, all.x=TRUE)
+
+col.vit.poolC <- colnames(invitro.poolC)
+```
+
+```{r}
+# reorder columns
+invitro.poolC.reorder <- invitro.poolC[,c(1,16,2,15,
+                                  3,4,5,
+                                  6,7,8,
+                                  9,10,11,
+                                  12,13,14)]
+
+# replace NA values with 0
+invitro.poolC.reorder <- replace(invitro.poolC.reorder, is.na(invitro.poolC.reorder), 0)
+
+# Write to table for mageck run
+write_delim(invitro.poolC.reorder,file="invitro.poolC.txt", delim = '\t')
+```
+
+### results import and plotting
+
+```{r}
+files.toPlot <- list.files(pattern=glob2rx("invitro.poolC_*gene_summary.txt"), full.names=FALSE)
+files.toPlot <- str_replace(files.toPlot, ".gene_summary.txt", "")
+files.toPlot
+
+for (i in files.toPlot){
+  assign(paste0(i,".gdata"),ReadRRA(paste0(i,".gene_summary.txt"), score = c("lfc", "rra")[1]))
+  assign(paste0(i,".sdata"),ReadsgRRA(paste0(i,".sgrna_summary.txt")))
+}  
+
+for (i in files.toPlot){
+  x <- get(paste0(i,".gdata"))
+  print(plot_gdata_volcano(x))
+}
+```
+
+## In Vitro Pool D
+
+```{r}
+invitro.poolD.1 <- ldf.200406[[3]][c(1,12)]
+invitro.poolD.2 <- ldf.200406[[11]][c(1,4,5,6,7,8,9,18,19,20,21,22,23)]
+invitro.poolD.3 <- ldf.200406[[15]][c(1,14)]
+
+invitro.poolD <- merge(x=invitro.poolD.1,y=invitro.poolD.2, by.x=c("Construct.Barcode"),by.y=c("Construct.Barcode"), all=TRUE)
+invitro.poolD <- merge(x=invitro.poolD,y=invitro.poolD.3, by.x=c("Construct.Barcode"),by.y=c("Construct.Barcode"), all=TRUE)
+invitro.poolD <- merge(x=invitro.poolD,y=sgRNAs.gene, by.x=c("Construct.Barcode"),by.y=c("Barcode.Sequence"), all=FALSE, all.x=TRUE)
+
+col.vit.poolD <- colnames(invitro.poolD)
+```
+
+```{r}
+# reorder columns
+invitro.poolD.reorder <- invitro.poolD[,c(1,16,2,15,
+                                  3,4,5,
+                                  6,7,8,
+                                  9,10,11,
+                                  12,13,14)]
+
+# replace NA values with 0
+invitro.poolD.reorder <- replace(invitro.poolD.reorder, is.na(invitro.poolD.reorder), 0)
+
+# Write to table for mageck run
+write_delim(invitro.poolD.reorder,file="invitro.poolD.txt", delim = '\t')
+```
+
+### results import and plotting
+
+```{r}
+files.toPlot <- list.files(pattern=glob2rx("invitro.poolD_*gene_summary.txt"), full.names=FALSE)
+files.toPlot <- str_replace(files.toPlot, ".gene_summary.txt", "")
+files.toPlot
+
+for (i in files.toPlot){
+  assign(paste0(i,".gdata"),ReadRRA(paste0(i,".gene_summary.txt"), score = c("lfc", "rra")[1]))
+  assign(paste0(i,".sdata"),ReadsgRRA(paste0(i,".sgrna_summary.txt")))
+}  
+
+for (i in files.toPlot){
+  x <- get(paste0(i,".gdata"))
+  print(plot_gdata_volcano(x))
+}
+```
+
+## In Vitro Pool E
+
+```{r}
+invitro.poolE.1 <- ldf.200406[[5]][c(1,13)]
+invitro.poolE.2 <- ldf.200406[[12]][c(1,10,11,12,13,14,24)]
+invitro.poolE.3 <- ldf.200406[[16]][c(1,3,4,5,6,7,15)]
+
+invitro.poolE <- merge(x=invitro.poolE.1,y=invitro.poolE.2, by.x=c("Construct.Barcode"),by.y=c("Construct.Barcode"), all=TRUE)
+invitro.poolE <- merge(x=invitro.poolE,y=invitro.poolE.3, by.x=c("Construct.Barcode"),by.y=c("Construct.Barcode"), all=TRUE)
+invitro.poolE <- merge(x=invitro.poolE,y=sgRNAs.gene, by.x=c("Construct.Barcode"),by.y=c("Barcode.Sequence"), all=FALSE, all.x=TRUE)
+
+col.vit.poolE <- colnames(invitro.poolE)
+```
+
+```{r}
+# reorder columns
+invitro.poolE.reorder <- invitro.poolE[,c(1,15,2,14,
+                                  3,4,
+                                  5,6,7,
+                                  8,9,10,
+                                  11,12,13)]
+
+# replace NA values with 0
+invitro.poolE.reorder <- replace(invitro.poolE.reorder, is.na(invitro.poolE.reorder), 0)
+
+# Write to table for mageck run
+write_delim(invitro.poolE.reorder,file="invitro.poolE.txt", delim = '\t')
+```
+
+### results import and plotting
+
+```{r}
+files.toPlot <- list.files(pattern=glob2rx("invitro.poolE_*gene_summary.txt"), full.names=FALSE)
+files.toPlot <- str_replace(files.toPlot, ".gene_summary.txt", "")
+files.toPlot
+
+for (i in files.toPlot){
+  assign(paste0(i,".gdata"),ReadRRA(paste0(i,".gene_summary.txt"), score = c("lfc", "rra")[1]))
+  assign(paste0(i,".sdata"),ReadsgRRA(paste0(i,".sgrna_summary.txt")))
+}  
+
+for (i in files.toPlot){
+  x <- get(paste0(i,".gdata"))
+  print(plot_gdata_volcano(x))
+}
+```
+
+## In Vitro Pool F
+
+```{r}
+invitro.poolF.1 <- ldf.200406[[6]][c(1,14)]
+invitro.poolF.2 <- ldf.200406[[13]][c(1,15,16,17)]
+invitro.poolF.3 <- ldf.200406[[17]][c(1,8,9,10,11,16)]
+invitro.poolF.4 <- ldf.200627[[64]][c(1,7,8)]
+invitro.poolF.5 <- ldf.RH[[3]][c(1,3,4,5)]
+
+invitro.poolF <- merge(x=invitro.poolF.1,y=invitro.poolF.2, by.x=c("Construct.Barcode"),by.y=c("Construct.Barcode"), all=TRUE)
+invitro.poolF <- merge(x=invitro.poolF,y=invitro.poolF.3, by.x=c("Construct.Barcode"),by.y=c("Construct.Barcode"), all=TRUE)
+invitro.poolF <- merge(x=invitro.poolF,y=invitro.poolF.4, by.x=c("Construct.Barcode"),by.y=c("Construct.Barcode"), all=TRUE)
+invitro.poolF <- merge(x=invitro.poolF,y=invitro.poolF.5, by.x=c("Construct.Barcode"),by.y=c("Construct.Barcode"), all=TRUE)
+invitro.poolF <- merge(x=invitro.poolF,y=sgRNAs.gene, by.x=c("Construct.Barcode"),by.y=c("Barcode.Sequence"), all=FALSE, all.x=TRUE)
+
+col.vit.poolF <- colnames(invitro.poolF)
+```
+
+```{r}
+# reorder columns
+invitro.poolF.reorder <- invitro.poolF[,c(1,16,2,10,
+                                  3,4,5,
+                                  13,14,15,
+                                  6,7,8,
+                                  9,11,12)]
+
+# replace NA values with 0
+invitro.poolF.reorder <- replace(invitro.poolF.reorder, is.na(invitro.poolF.reorder), 0)
+# Write to table for mageck run
+write_delim(invitro.poolF.reorder,file="invitro.poolF.txt", delim = '\t')
+```
+
+### results import and plotting
+
+```{r}
+files.toPlot <- list.files(pattern=glob2rx("invitro.poolF_*gene_summary.txt"), full.names=FALSE)
+files.toPlot <- str_replace(files.toPlot, ".gene_summary.txt", "")
+files.toPlot
+
+for (i in files.toPlot){
+  assign(paste0(i,".gdata"),ReadRRA(paste0(i,".gene_summary.txt"), score = c("lfc", "rra")[1]))
+  assign(paste0(i,".sdata"),ReadsgRRA(paste0(i,".sgrna_summary.txt")))
+}  
+
+for (i in files.toPlot){
+  x <- get(paste0(i,".gdata"))
+  print(plot_gdata_volcano(x))
+}
+```
+
+# In Vivo
+
+## In Vivo Pool A
+
+```{r}
+invivo.poolA.1 <- ldf.200406[[1]][c(1,3)]
+invivo.poolA.2 <- ldf.200406[[14]][c(1,23,24)]
+invivo.poolA.3 <- ldf.200406[[18]][c(1,3,4)]
+invivo.poolA.4 <- ldf.200627[[61]][c(1,9,10,11,13,23,24,25,26,27,28,29)]
+invivo.poolA.RH <- ldf.RH[[1]][c(1,6,7,8,9,10,11)]
+
+invivo.poolA <- merge(x=invivo.poolA.1,y=invivo.poolA.2, by.x=c("Construct.Barcode"),by.y=c("Construct.Barcode"), all=TRUE)
+invivo.poolA <- merge(x=invivo.poolA,y=invivo.poolA.3, by.x=c("Construct.Barcode"),by.y=c("Construct.Barcode"), all=TRUE)
+invivo.poolA <- merge(x=invivo.poolA,y=invivo.poolA.4, by.x=c("Construct.Barcode"),by.y=c("Construct.Barcode"), all=TRUE)
+invivo.poolA <- merge(x=invivo.poolA,y=invivo.poolA.RH, by.x=c("Construct.Barcode"),by.y=c("Construct.Barcode"), all=TRUE)
+invivo.poolA <- merge(x=invivo.poolA,y=sgRNAs.gene, by.x=c("Construct.Barcode"),by.y=c("Barcode.Sequence"), all=FALSE, all.x=TRUE)
+
+col.viv.poolA <- colnames(invivo.poolA)
+```
+
+```{r}
+# reorder columns
+invivo.poolA.reorder <- invivo.poolA[,c(1,24,2,
+                                3,5,18,20,22,
+                                11,13,16,
+                                7,8,9,10,
+                                4,6,19,21,23,
+                                12,14,15,17)]
+
+# replace NA values with 0
+invivo.poolA.reorder <- replace(invivo.poolA.reorder, is.na(invivo.poolA.reorder), 0)
+# Write to table for mageck run
+write_delim(invivo.poolA.reorder,file="invivo.poolA.txt", delim = '\t')
+```
+
+### results import and plotting
+
+```{r}
+files.toPlot <- list.files(pattern=glob2rx("invivo.poolA_*gene_summary.txt"), full.names=FALSE)
+files.toPlot <- str_replace(files.toPlot, ".gene_summary.txt", "")
+files.toPlot
+
+for (i in files.toPlot){
+  assign(paste0(i,".gdata"),ReadRRA(paste0(i,".gene_summary.txt"), score = c("lfc", "rra")[1]))
+  assign(paste0(i,".sdata"),ReadsgRRA(paste0(i,".sgrna_summary.txt")))
+}
+
+for (i in files.toPlot){
+  x <- get(paste0(i,".gdata"))
+  print(plot_gdata_volcano(x))
+}
+```
+
+## In Vivo Pool B
+
+```{r}
+invivo.poolB.1 <- ldf.200406[[4]][c(1,4)]
+invivo.poolB.2 <- ldf.200406[[20]][c(1,5,6,7,8,9,10,11,12,14,15,16)]
+invivo.poolB.3 <- ldf.200627[[58]][c(1,3,4,5,6,7,8)]
+invivo.poolB.4 <- ldf.200627[[63]][c(1,14,15,16,17,30,31)]
+
+
+invivo.poolB <- merge(x=invivo.poolB.1,y=invivo.poolB.2, by.x=c("Construct.Barcode"),by.y=c("Construct.Barcode"), all=TRUE)
+invivo.poolB <- merge(x=invivo.poolB,y=invivo.poolB.3, by.x=c("Construct.Barcode"),by.y=c("Construct.Barcode"), all=TRUE)
+invivo.poolB <- merge(x=invivo.poolB,y=invivo.poolB.4, by.x=c("Construct.Barcode"),by.y=c("Construct.Barcode"), all=TRUE)
+invivo.poolB <- merge(x=invivo.poolB,y=sgRNAs.gene, by.x=c("Construct.Barcode"),by.y=c("Barcode.Sequence"), all=FALSE, all.x=TRUE)
+
+col.viv.poolB <- colnames(invivo.poolB)
+```
+
+```{r}
+# reorder columns
+invivo.poolB.reorder <- invivo.poolB[,c(1,26,2,
+                                3,5,7,9,12,
+                                15,17,25,
+                                20,21,22,23,
+                                4,6,8,10,11,13,
+                                14,16,18,19,24)]
+
+# replace NA values with 0
+invivo.poolB.reorder <- replace(invivo.poolB.reorder, is.na(invivo.poolB.reorder), 0)
+# Write to table for mageck run
+write_delim(invivo.poolB.reorder,file="invivo.poolB.txt", delim = '\t')
+```
+
+### results import and plotting
+
+```{r}
+files.toPlot <- list.files(pattern=glob2rx("invivo.poolB_*gene_summary.txt"), full.names=FALSE)
+files.toPlot <- str_replace(files.toPlot, ".gene_summary.txt", "")
+files.toPlot
+
+for (i in files.toPlot){
+  assign(paste0(i,".gdata"),ReadRRA(paste0(i,".gene_summary.txt"), score = c("lfc", "rra")[1]))
+  assign(paste0(i,".sdata"),ReadsgRRA(paste0(i,".sgrna_summary.txt")))
+}
+
+for (i in files.toPlot){
+  x <- get(paste0(i,".gdata"))
+  print(plot_gdata_volcano(x))
+}
+```
+
+## In Vivo Pool C
+
+```{r}
+invivo.poolC.1 <- ldf.200406[[2]][c(1,5)]
+invivo.poolC.2 <- ldf.200406[[19]][c(1,17,18,19,20,21,22,23,24,26)]
+invivo.poolC.3 <- ldf.200627[[56]][c(1,9,10,11,12,13,14,15,16,17)]
+invivo.poolC.4 <- ldf.200627[[62]][c(1,18,19,20,21,22)]
+
+invivo.poolC <- merge(x=invivo.poolC.1,y=invivo.poolC.2, by.x=c("Construct.Barcode"),by.y=c("Construct.Barcode"), all=TRUE)
+invivo.poolC <- merge(x=invivo.poolC,y=invivo.poolC.3, by.x=c("Construct.Barcode"),by.y=c("Construct.Barcode"), all=TRUE)
+invivo.poolC <- merge(x=invivo.poolC,y=invivo.poolC.4, by.x=c("Construct.Barcode"),by.y=c("Construct.Barcode"), all=TRUE)
+invivo.poolC <- merge(x=invivo.poolC,y=sgRNAs.gene, by.x=c("Construct.Barcode"),by.y=c("Barcode.Sequence"), all=FALSE, all.x=TRUE)
+
+col.viv.poolC <- colnames(invivo.poolC)
+```
+
+```{r}
+# reorder columns
+
+invivo.poolC.reorder <- invivo.poolC[,c(1,26,2,
+                                3,5,7,9,
+                                13,15,18,20,
+                                21,22,23,24,25,
+                                4,6,8,10,11,
+                                12,14,16,17,19)]
+
+# replace NA values with 0
+invivo.poolC.reorder <- replace(invivo.poolC.reorder, is.na(invivo.poolC.reorder), 0)
+# Write to table for mageck run
+write_delim(invivo.poolC.reorder,file="invivo.poolC.txt", delim = '\t')
+```
+
+### results import and plotting
+
+```{r}
+files.toPlot <- list.files(pattern=glob2rx("invivo.poolC_*gene_summary.txt"), full.names=FALSE)
+files.toPlot <- str_replace(files.toPlot, ".gene_summary.txt", "")
+files.toPlot
+
+for (i in files.toPlot){
+  assign(paste0(i,".gdata"),ReadRRA(paste0(i,".gene_summary.txt"), score = c("lfc", "rra")[1]))
+  assign(paste0(i,".sdata"),ReadsgRRA(paste0(i,".sgrna_summary.txt")))
+}
+
+for (i in files.toPlot){
+  x <- get(paste0(i,".gdata"))
+  print(plot_gdata_volcano(x))
+}
+```
+
+## In Vivo Pool D
+
+```{r}
+invivo.poolD.1 <- ldf.200406[[3]][c(1,9)]
+invivo.poolD.2 <- ldf.200627[[51]][c(1,14,15,16,17,18,19,30,31,32,33,34,35,36,37,38)]
+invivo.poolD.3 <- ldf.200627[[57]][c(1,18,19,20,21,22,23,24,25,26,27)]
+
+invivo.poolD <- merge(x=invivo.poolD.1,y=invivo.poolD.2, by.x=c("Construct.Barcode"),by.y=c("Construct.Barcode"), all=TRUE)
+invivo.poolD <- merge(x=invivo.poolD,y=invivo.poolD.3, by.x=c("Construct.Barcode"),by.y=c("Construct.Barcode"), all=TRUE)
+invivo.poolD <- merge(x=invivo.poolD,y=sgRNAs.gene, by.x=c("Construct.Barcode"),by.y=c("Barcode.Sequence"), all=FALSE, all.x=TRUE)
+
+col.viv.poolD <- colnames(invivo.poolD)
+```
+
+```{r}
+# reorder columns
+invivo.poolD.reorder <- invivo.poolD[,c(1,28,2,
+                                18,20,22,24,26,
+                                9,11,13,15,
+                                3,4,5,6,7,8,
+                                19,21,23,25,27,
+                                10,12,14,16,17)]
+
+# replace NA values with 0
+invivo.poolD.reorder <- replace(invivo.poolD.reorder, is.na(invivo.poolD.reorder), 0)
+# Write to table for mageck run
+write_delim(invivo.poolD.reorder,file="invivo.poolD.txt", delim = '\t')
+```
+
+### results import and plotting
+
+```{r}
+files.toPlot <- list.files(pattern=glob2rx("invivo.poolD_*gene_summary.txt"), full.names=FALSE)
+files.toPlot <- str_replace(files.toPlot, ".gene_summary.txt", "")
+files.toPlot
+
+for (i in files.toPlot){
+  assign(paste0(i,".gdata"),ReadRRA(paste0(i,".gene_summary.txt"), score = c("lfc", "rra")[1]))
+  assign(paste0(i,".sdata"),ReadsgRRA(paste0(i,".sgrna_summary.txt")))
+}
+
+for (i in files.toPlot){
+  x <- get(paste0(i,".gdata"))
+  print(plot_gdata_volcano(x))
+}
+```
+
+## In Vivo Pool E
+
+```{r}
+invivo.poolE.1 <- ldf.200406[[5]][c(1,10)]
+invivo.poolE.2 <- ldf.200627[[52]][c(1,3,20,21,22,23,24,39,40,41,42,43,44,45,46,47,48)]
+invivo.poolE.3 <- ldf.200627[[59]][c(1,28,29,30,31,32,33,34,35,36,37,38)]
+
+invivo.poolE <- merge(x=invivo.poolE.1,y=invivo.poolE.2, by.x=c("Construct.Barcode"),by.y=c("Construct.Barcode"), all=TRUE)
+invivo.poolE <- merge(x=invivo.poolE,y=invivo.poolE.3, by.x=c("Construct.Barcode"),by.y=c("Construct.Barcode"), all=TRUE)
+invivo.poolE <- merge(x=invivo.poolE,y=sgRNAs.gene, by.x=c("Construct.Barcode"),by.y=c("Barcode.Sequence"), all=FALSE, all.x=TRUE)
+
+col.viv.poolE <- colnames(invivo.poolE)
+```
+
+```{r}
+# reorder columns
+invivo.poolE.reorder <- invivo.poolE[,c(1,30,2,
+                                19,21,23,25,27,29,
+                                9,11,14,16,18,
+                                4,5,6,7,8,
+                                3,20,22,24,26,28,
+                                10,12,13,15,17)]
+
+# replace NA values with 0
+invivo.poolE.reorder <- replace(invivo.poolE.reorder, is.na(invivo.poolE.reorder), 0)
+# Write to table for mageck run
+write_delim(invivo.poolE.reorder,file="invivo.poolE.txt", delim = '\t')
+```
+
+### results import and plotting
+
+```{r}
+files.toPlot <- list.files(pattern=glob2rx("invivo.poolE_*gene_summary.txt"), full.names=FALSE)
+files.toPlot <- str_replace(files.toPlot, ".gene_summary.txt", "")
+files.toPlot
+
+for (i in files.toPlot){
+  assign(paste0(i,".gdata"),ReadRRA(paste0(i,".gene_summary.txt"), score = c("lfc", "rra")[1]))
+  assign(paste0(i,".sdata"),ReadsgRRA(paste0(i,".sgrna_summary.txt")))
+}
+
+for (i in files.toPlot){
+  x <- get(paste0(i,".gdata"))
+  print(plot_gdata_volcano(x))
+}
+```
+
+## In Vivo Pool F
+
+```{r}
+invivo.poolF.1 <- ldf.200406[[6]][c(1,11)]
+invivo.poolF.2 <- ldf.200627[[42]][c(1,3,4,5,6,7,8,9,11,12)]
+invivo.poolF.3 <- ldf.200627[[53]][c(1,4,5,6,8,9,10,11,12,13,25,26,27,28,29,49,50)]
+
+invivo.poolF <- merge(x=invivo.poolF.1,y=invivo.poolF.2, by.x=c("Construct.Barcode"),by.y=c("Construct.Barcode"), all=TRUE)
+invivo.poolF <- merge(x=invivo.poolF,y=invivo.poolF.3, by.x=c("Construct.Barcode"),by.y=c("Construct.Barcode"), all=TRUE)
+invivo.poolF <- merge(x=invivo.poolF,y=sgRNAs.gene, by.x=c("Construct.Barcode"),by.y=c("Barcode.Sequence"), all=FALSE, all.x=TRUE)
+
+col.viv.poolF <- colnames(invivo.poolF)
+```
+
+```{r}
+# reorder columns
+invivo.poolF.reorder <- invivo.poolF[,c(1,28,2,
+                                14,15,17,19,
+                                3,5,7,10,26,
+                                21,22,23,24,25,
+                                13,16,18,20,
+                                4,6,8,9,11,27)]
+
+# replace NA values with 0
+invivo.poolF.reorder <- replace(invivo.poolF.reorder, is.na(invivo.poolF.reorder), 0)
+# Write to table for mageck run
+write_delim(invivo.poolF.reorder,file="invivo.poolF.txt", delim = '\t')
+```
+
+### results import and plotting
+
+```{r}
+files.toPlot <- list.files(pattern=glob2rx("invivo.poolF_*gene_summary.txt"), full.names=FALSE)
+files.toPlot <- str_replace(files.toPlot, ".gene_summary.txt", "")
+files.toPlot
+
+for (i in files.toPlot){
+  assign(paste0(i,".gdata"),ReadRRA(paste0(i,".gene_summary.txt"), score = c("lfc", "rra")[1]))
+  assign(paste0(i,".sdata"),ReadsgRRA(paste0(i,".sgrna_summary.txt")))
+}
+
+for (i in files.toPlot){
+  x <- get(paste0(i,".gdata"))
+  print(plot_gdata_volcano(x))
+}
+```
+
+# QC of selected data
+
+There are a 2 samples that appear to have been sequenced multiple times.
+It would be inappropriate to use more than one of these technical replicates in analysis so decisions need to me made about which to select.
+These decisions were made based on "preSelect_" boxplots. When choice is not clear, first one was selected.
+Selection will be done my simply omitting the appropriate column index from the mageck scripts. Omitted samples are:
+
+invitro.poolA.txt - 4 - 200406.1.17 - Pool.A..1.8._hEGFRv3.CAR_ET.1.10_rep3_1360..1361..1362..1363..1406..1407..1408..1409.x
+invitro.poolB.txt - 11 - 200627.63.5 - In.vitro_Pool.B..9.16._mCD19.CAR_ET.1.10_rep3_1410..1411..1412..1413..1414..1415..1416..1417.y
+
+## QC plots of normalized data
+
+
+```{r,fig.height=4,fig.width=5}
+files.toPlot <- list.files(pattern=glob2rx("*all_v_input.normalized.txt"), full.names=FALSE)
+
+# Create an empty list to store the ggplot objects
+PCAdata <- list()
+PCAplots <- list()
+
+for (i in files.toPlot){
+  plotTitle <- sub("_all_v_input.normalized.txt", "", i)
+  norm <- read.table(i, row.names = 1, sep = "\t", header = TRUE)
+  norm.l2 <- norm %>% select(-Gene)
+  norm.l2 <- log2(norm.l2+1)
+  dims <- dim(norm.l2)
+  norm.l2 <- norm.l2 %>% rename_at(vars(everything()), ~str_replace_all(., "\\.\\.\\d+\\.\\d+\\.", "")) %>% 
+    rename_at(vars(everything()), ~str_replace_all(., "_\\d{4}\\.{2}\\d{4}\\.{2}\\d{4}\\.{2}\\d{4}\\.{2}\\d{4}\\.{2}\\d{4}\\.{2}\\d{4}\\.{2}\\d{4}", "")) %>% 
+    rename_at(vars(everything()), ~str_replace_all(., "In.vitro_", "")) %>% 
+    rename_at(vars(everything()), ~str_replace_all(., "In.vitro\\.", "")) %>%
+    rename_at(vars(everything()), ~str_replace_all(., "In.vivo_", "")) %>% 
+    rename_at(vars(everything()), ~str_replace_all(., "In.vivo\\.", "")) %>% 
+    #rename_at(vars(everything()), ~str_replace_all(., "^AR\\d{4}_", "")) %>% 
+    rename_at(vars(everything()), ~str_replace_all(., "Pool\\.[ABCDEF]_", "")) %>% 
+    rename_at(vars(everything()), ~str_replace_all(., "_Pool\\.[ABCDEF]_.", "")) %>% 
+    rename_at(vars(everything()), ~str_replace_all(., "\\.Pool\\.[ABCDEF]", "")) %>% 
+    rename_at(vars(everything()), ~str_replace_all(., "_Pool\\.[ABCDEF]", "")) %>% 
+    rename_at(vars(everything()), ~str_replace_all(., "_rep", "_"))
+  assign(paste0(plotTitle,".boxPlot"),
+         ggplot(stack(norm.l2), aes(x = ind, y = values)) + geom_boxplot() + ylim(0, 12) +
+           theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + 
+           ggtitle(paste0(plotTitle," - ",dims[1],"x",dims[2])))
+  
+  select.pca <- prcomp(t(norm.l2))
+  var <- select.pca$sdev^2
+  variance <- var/sum(var)
+  percentVar <- select.pca$sdev^2 / sum(select.pca$sdev^2 )
+  percentVar <- round(100 * percentVar,2)
+  select.pca$percentVar <- percentVar
+  select.pca$samps <- colnames(norm.l2)
+  select.pca$samps <- select.pca$samps %>% 
+    str_replace_all(., "^AR\\d{4}_", "") %>% 
+    str_replace_all(., "\\.[xy]$", "") %>%
+    str_replace_all(., "CAR_", "") %>%
+    str_replace_all(., "_[123]$", "")
+  data <- as.data.frame(select.pca$x)
+  data$fill <- factor(select.pca$samps)
+  plot <- ggplot(data, aes(x=PC1, y=PC2)) + 
+         geom_point(aes(fill = fill),shape=21, size = 4) + 
+         xlab(paste0("PC1 - ",select.pca$percentVar[1]," % of variability")) + 
+         ylab(paste0("PC2 - ",select.pca$percentVar[2]," % of variability")) +
+    theme(legend.text = element_text(size = 8))
+  PCAdata[[plotTitle]] <- data
+  PCAplots[[plotTitle]] <- plot
+}
+```
+
+### Assemble pairs of plots
+
+```{r,fig.height=9,fig.width=6}
+invitA <- ggarrange(invitro.poolA.boxPlot,PCAplots[[1]],nrow=2,ncol=1)
+invitB <- ggarrange(invitro.poolB.boxPlot,PCAplots[[2]],nrow=2,ncol=1)
+invitC <- ggarrange(invitro.poolC.boxPlot,PCAplots[[3]],nrow=2,ncol=1)
+invitD <- ggarrange(invitro.poolD.boxPlot,PCAplots[[4]],nrow=2,ncol=1)
+invitE <- ggarrange(invitro.poolD.boxPlot,PCAplots[[5]],nrow=2,ncol=1)
+invitF <- ggarrange(invitro.poolF.boxPlot,PCAplots[[6]],nrow=2,ncol=1)
+
+invivA <- ggarrange(invivo.poolA.boxPlot,PCAplots[[7]],nrow=2,ncol=1)
+invivB <- ggarrange(invivo.poolB.boxPlot,PCAplots[[8]],nrow=2,ncol=1)
+invivC <- ggarrange(invivo.poolC.boxPlot,PCAplots[[9]],nrow=2,ncol=1)
+invivD <- ggarrange(invivo.poolD.boxPlot,PCAplots[[10]],nrow=2,ncol=1)
+invivE <- ggarrange(invivo.poolE.boxPlot,PCAplots[[11]],nrow=2,ncol=1)
+invivF <- ggarrange(invivo.poolF.boxPlot,PCAplots[[12]],nrow=2,ncol=1)
+
+vit <- ggarrange(invitA,invitB,invitC,invitD,invitE,invitF,nrow=1,ncol=6)
+viv <- ggarrange(invivA,invivB,invivC,invivD,invivE,invivF,nrow=1,ncol=6)
+```
+
+### Build final QC figures
+
+```{r,fig.width=20,fig.height=8}
+vit
+viv
+#ggarrange(vit,viv,nrow=1,ncol=2)
+```
+
+
+## Volcano plots of hart essential genes in EGFR CAR vs Input comparisons
+
+```{r}
+gdata_obj <- ls(pattern=glob2rx("*input.gdata"))
+gdata_obj <- grep("all", gdata_obj, invert = TRUE, value = TRUE)
+for (i in 1:length(gdata_obj)){
+  print(plot_essentials(get(gdata_obj[i])) + ggtitle(gdata_obj[i]))
+}
+```
+
+## Box plots of essential genes in EGFR CAR vs Input comparisons
+
+```{r}
+gdata_obj <- ls(pattern=glob2rx("*input.gdata"))
+gdata_obj <- grep("all", gdata_obj, invert = TRUE, value = TRUE)
+
+EssentialPlot.plots <- list()
+
+for (i in 1:length(gdata_obj)){
+  plotTitle <- sub(".gdata", "", gdata_obj[[i]])
+  plot <- vlnplot_essentials(get(gdata_obj[i])) + ggtitle(plotTitle)
+  EssentialPlot.plots[[plotTitle]] <- plot
+}
+```
+
+### The essential gene boxplots are available in resulting list
+
+```{r,fig.width=18,fig.height=6}
+ggarrange(EssentialPlot.plots[[1]],EssentialPlot.plots[[2]],EssentialPlot.plots[[3]],EssentialPlot.plots[[4]],EssentialPlot.plots[[5]],EssentialPlot.plots[[6]],
+          EssentialPlot.plots[[7]],EssentialPlot.plots[[8]],EssentialPlot.plots[[9]],EssentialPlot.plots[[10]],EssentialPlot.plots[[11]],EssentialPlot.plots[[12]],
+          nrow=2,ncol=6)
+```
+## Assembling the original screen re-analysis data
+
+```{r}
+invitro.1_10.gdata.list <- ls(pattern=glob2rx("invitro.*mCD19.CAR_ET.1.10_v_hEGFRv3.CAR_ET.1.10.gdata$"))
+
+invitro.1_10.gdata.combined <- rbind(invitro.poolA_mCD19.CAR_ET.1.10_v_hEGFRv3.CAR_ET.1.10.gdata,
+                                     invitro.poolB_mCD19.CAR_ET.1.10_v_hEGFRv3.CAR_ET.1.10.gdata,
+                                     invitro.poolC_mCD19.CAR_ET.1.10_v_hEGFRv3.CAR_ET.1.10.gdata,
+                                     invitro.poolD_mCD19.CAR_ET.1.10_v_hEGFRv3.CAR_ET.1.10.gdata,
+                                     invitro.poolE_mCD19.CAR_ET.1.10_v_hEGFRv3.CAR_ET.1.10.gdata,
+                                     invitro.poolF_mCD19.CAR_ET.1.10_v_hEGFRv3.CAR_ET.1.10.gdata)
+
+invitro.1_10.gdata.combined <- rename(invitro.1_10.gdata.combined,invitro.1_10.Score = Score, invitro.1_10.FDR = FDR)
+
+invitro.1_2.gdata.list <- ls(pattern=glob2rx("invitro.*mCD19.CAR_ET.1.2_v_hEGFRv3.CAR_ET.1.2.gdata$"))
+
+invitro.1_2.gdata.combined <- rbind(invitro.poolA_mCD19.CAR_ET.1.2_v_hEGFRv3.CAR_ET.1.2.gdata,
+                                     invitro.poolB_mCD19.CAR_ET.1.2_v_hEGFRv3.CAR_ET.1.2.gdata,
+                                     invitro.poolC_mCD19.CAR_ET.1.2_v_hEGFRv3.CAR_ET.1.2.gdata,
+                                     invitro.poolD_mCD19.CAR_ET.1.2_v_hEGFRv3.CAR_ET.1.2.gdata,
+                                     invitro.poolE_mCD19.CAR_ET.1.2_v_hEGFRv3.CAR_ET.1.2.gdata,
+                                     invitro.poolF_mCD19.CAR_ET.1.2_v_hEGFRv3.CAR_ET.1.2.gdata)
+
+invitro.1_2.gdata.combined <- rename(invitro.1_2.gdata.combined,invitro.1_2.Score = Score, invitro.1_2.FDR = FDR)
+
+invivo.BM_10.gdata.list <- ls(pattern=glob2rx("invivo.*BM_mCD19_10m_v_BM_hEGFRv3_15m.gdata$"))
+
+invivo.BM_10.gdata.combined <- rbind(invivo.poolA_BM_mCD19_10m_v_BM_hEGFRv3_15m.gdata,
+                                    invivo.poolB_BM_mCD19_10m_v_BM_hEGFRv3_15m.gdata,
+                                    invivo.poolC_BM_mCD19_10m_v_BM_hEGFRv3_15m.gdata,
+                                    invivo.poolD_BM_mCD19_10m_v_BM_hEGFRv3_15m.gdata,
+                                    invivo.poolE_BM_mCD19_10m_v_BM_hEGFRv3_15m.gdata,
+                                    invivo.poolF_BM_mCD19_10m_v_BM_hEGFRv3_15m.gdata)
+
+invivo.BM_10.gdata.combined <- rename(invivo.BM_10.gdata.combined,invivo.BM_10.Score = Score, invivo.BM_10.FDR = FDR)
+
+invivo.BM_15.gdata.list <- ls(pattern=glob2rx("invivo.*BM_mCD19_15m_v_BM_hEGFRv3_15m.gdata$"))
+
+invivo.BM_15.gdata.combined <- rbind(invivo.poolA_BM_mCD19_15m_v_BM_hEGFRv3_15m.gdata,
+                                    invivo.poolB_BM_mCD19_15m_v_BM_hEGFRv3_15m.gdata,
+                                    invivo.poolC_BM_mCD19_15m_v_BM_hEGFRv3_15m.gdata,
+                                    invivo.poolD_BM_mCD19_15m_v_BM_hEGFRv3_15m.gdata,
+                                    invivo.poolE_BM_mCD19_15m_v_BM_hEGFRv3_15m.gdata,
+                                    invivo.poolF_BM_mCD19_15m_v_BM_hEGFRv3_15m.gdata)
+
+invivo.BM_15.gdata.combined <- rename(invivo.BM_15.gdata.combined,invivo.BM_15.Score = Score, invivo.BM_15.FDR = FDR)
+
+invivo.SP_10.gdata.list <- ls(pattern=glob2rx("invivo.*SP_mCD19_10m_v_SP_hEGFRv3_15m.gdata$"))
+
+invivo.SP_10.gdata.combined <- rbind(invivo.poolA_SP_mCD19_10m_v_SP_hEGFRv3_15m.gdata,
+                                    invivo.poolB_SP_mCD19_10m_v_SP_hEGFRv3_15m.gdata,
+                                    invivo.poolC_SP_mCD19_10m_v_SP_hEGFRv3_15m.gdata,
+                                    invivo.poolD_SP_mCD19_10m_v_SP_hEGFRv3_15m.gdata,
+                                    invivo.poolE_SP_mCD19_10m_v_SP_hEGFRv3_15m.gdata,
+                                    invivo.poolF_SP_mCD19_10m_v_SP_hEGFRv3_15m.gdata)
+
+invivo.SP_10.gdata.combined <- rename(invivo.SP_10.gdata.combined,invivo.SP_10.Score = Score, invivo.SP_10.FDR = FDR)
+```
+
+## Checking combined data
+
+```{r}
+combined.list <- ls(pattern=("*gdata.combined$"))
+
+for (i in combined.list){
+  print(dim(get(i)))
+}
+
+for (i in combined.list){
+  print(head(get(i)))
+}
+```
+
+## Merging original screen re-analysis
+
+```{r}
+#combined.objects <- mget(combined.list)
+#combined.df <- combined.objects %>% reduce(inner_join, by='gene')
+
+geneLevel <- left_join(invitro.1_10.gdata.combined, invitro.1_2.gdata.combined, by = "id") %>%
+  left_join(invivo.BM_10.gdata.combined, by = "id") %>%
+  left_join(invivo.BM_15.gdata.combined, by = "id") %>%
+  left_join(invivo.SP_10.gdata.combined, by = "id")
+```
+
+### Gene Level Whitelist and other annotations
+
+```{r}
+geneLevel.annotated <- merge(geneLevel,GeneSymWhitelist,by.x = 'id', by.y = 'GeneSym',all=TRUE)
+geneLevel.annotated <- merge(geneLevel.annotated,biocarta.ifng,by.x = 'id', by.y = 'Gene',all=TRUE)
+geneLevel.annotated <- merge(geneLevel.annotated,hallmark.ifng,by.x = 'id', by.y = 'Gene',all=TRUE)
+geneLevel.annotated <- merge(geneLevel.annotated,mmKEGG.toJoin,by.x = 'id', by.y = 'MmSym',all=TRUE)
+geneLevel.annotated.whitelist <- geneLevel.annotated %>% dplyr::filter(geneSym.whitelist == "Yes")
+
+write.xlsx(geneLevel.annotated.whitelist, file="geneLevel.annotated.whitelist.xlsx", overwrite = TRUE, rowNames=TRUE)
+```
+
+# write session info
+
+```{r}
+sessionInfo()
+writeLines(capture.output(sessionInfo()), "B-ALL_primaryScreen_sessionInfo.txt")
+```

@@ -1,0 +1,2 @@
+"0","hart <- read.xlsx(""../Documents/hart_essential_MGI.xlsx"")"
+"0","essentialGenes <- read_xlsx(""../Documents/essential_genes_combined_mouseSyms.xlsx"")"

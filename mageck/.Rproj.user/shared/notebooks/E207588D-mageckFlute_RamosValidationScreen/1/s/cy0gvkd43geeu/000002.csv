@@ -1,0 +1,6 @@
+"0","GeneMeans <- cbind(cd19_1to2_v_egfr_1to2.fc.Gene,cd19_1to10_v_egfr_1to10.fc.Gene,BM_cd19.15m_v_egfr.15m.fc.Gene,BM_cd19.10m_v_egfr.15m.fc.Gene,"
+"0","                   SP_cd19.15m_v_egfr.15m.fc.Gene,SP_cd19.10m_v_egfr.15m.fc.Gene)"
+"0","rownames(GeneMeans) <- GeneMeans[,1]"
+"0","GeneMeans <- GeneMeans %>% dplyr::select(-Gene)"
+"0","GeneMeans <- tibble::rownames_to_column(GeneMeans, ""Gene"")"
+"0","#write.xlsx(GeneMeans, file=""LFC_GeneMeans.xlsx"")"

@@ -1,0 +1,174 @@
+##start interactive node and activate conda mageckenv
+
+#bcc
+#cd /net/ostrom/data/bcc/projects/knouse-Knouse/012722-crispr
+
+module add miniconda3/v4
+source /home/software/conda/miniconda3/bin/condainit
+conda info --envs   
+source activate /home/charliew/.conda/envs/mageckenv
+module add samtools/1.10
+
+##convert table of sgRNA targets to fasta
+##first, copy tsv file, then replace tabs with ,
+cp knouse.mapping.71878.txt knouse.mapping.71878.csv
+perl -pi.bak -e 's/\t/,/' knouse.mapping.71878.csv 
+awk -F ',' '{print ">"$1"\n"$2}' knouse.mapping.71878.csv > knouse.mapping.71878.fa
+
+## reverse complement this fasta file
+## this is unnecessary, regular library can be used with proper bowtie2 command (see google doc)
+#module add emboss/6.6.0
+#revseq -sequence knouse.mapping.71878.fa -outseq knouse.mapping.71878_rev.fa 
+
+###############################################################################
+##build bowtie index and align fastq files
+
+bowtie2-build knouse.mapping.71878.fa bowtie2_ind_knouse.71878
+
+#############################################################
+## Run alignments of WI sequnce to this target
+## NOTE it is critical to get the start/end trimming specified properly and also specify strand
+## This is similar to BMC, read structure is the same but they are shorter so less needs to be trimmed off 3' end
+
+bowtie2 -x bowtie2_ind_knouse.71878 -U ../011722-crispr/2020_march_e227/originals/TTGACT-s_8_1_sequence.txt -3 30 --nofw --no-unal | egrep '^@SQ|^@PG|MD:Z:20' | samtools view -bS - > plasmid.TTGACT.bam
+
+bowtie2 -x bowtie2_ind_knouse.71878 -U ../011722-crispr/2020_june_neonate_pilot/originals/GGACGG-s_6_1_sequence.fq -3 30 --nofw --no-unal | egrep '^@SQ|^@PG|MD:Z:20' | samtools view -bS - > GGACGG.induction.bam
+bowtie2 -x bowtie2_ind_knouse.71878 -U ../011722-crispr/2020_june_neonate_pilot/originals/GCGGAC-s_6_1_sequence.fq -3 30 --nofw --no-unal | egrep '^@SQ|^@PG|MD:Z:20' | samtools view -bS - > GCGGAC.mouse3.bam
+bowtie2 -x bowtie2_ind_knouse.71878 -U ../011722-crispr/2020_june_neonate_pilot/originals/GGAACT-s_6_1_sequence.fq -3 30 --nofw --no-unal | egrep '^@SQ|^@PG|MD:Z:20' | samtools view -bS - > GGAACT.mouse4.bam
+bowtie2 -x bowtie2_ind_knouse.71878 -U ../011722-crispr/2020_june_neonate_pilot/originals/CTCTAC-s_6_1_sequence.fq -3 30 --nofw --no-unal | egrep '^@SQ|^@PG|MD:Z:20' | samtools view -bS - > CTCTAC.mouse7.bam
+bowtie2 -x bowtie2_ind_knouse.71878 -U ../011722-crispr/2020_june_neonate_pilot/originals/TTGACT-s_6_1_sequence.fq -3 30 --nofw --no-unal | egrep '^@SQ|^@PG|MD:Z:20' | samtools view -bS - > TTGACT.mouse8.bam
+
+
+bowtie2 -x bowtie2_ind_knouse.71878 -U ../011722-crispr/2021_feb_adult_pilot/originals/AAGCTA.mouse10.fq  -3 30 --nofw --no-unal | egrep '^@SQ|^@PG|MD:Z:20' | samtools view -bS - > AAGCTA.mouse10.bam 
+bowtie2 -x bowtie2_ind_knouse.71878 -U ../011722-crispr/2021_feb_adult_pilot/originals/CTGATC.mouse9.fq -3 30 --nofw --no-unal | egrep '^@SQ|^@PG|MD:Z:20' | samtools view -bS - > CTGATC.mouse9.bam
+bowtie2 -x bowtie2_ind_knouse.71878 -U ../011722-crispr/2021_feb_adult_pilot/originals/GGAACT.mouse14.fq -3 30 --nofw --no-unal | egrep '^@SQ|^@PG|MD:Z:20' | samtools view -bS - > GGAACT.mouse14.bam
+bowtie2 -x bowtie2_ind_knouse.71878 -U ../011722-crispr/2021_feb_adult_pilot/originals/GGACGG.mouse16.fq -3 30 --nofw --no-unal | egrep '^@SQ|^@PG|MD:Z:20' | samtools view -bS - > GGACGG.mouse16.bam
+bowtie2 -x bowtie2_ind_knouse.71878 -U ../011722-crispr/2021_feb_adult_pilot/originals/GTAGCC.mouse11.fq -3 30 --nofw --no-unal | egrep '^@SQ|^@PG|MD:Z:20' | samtools view -bS - > GTAGCC.mouse11.bam
+bowtie2 -x bowtie2_ind_knouse.71878 -U ../011722-crispr/2021_feb_adult_pilot/originals/TACAAG.mouse12.fq -3 30 --nofw --no-unal | egrep '^@SQ|^@PG|MD:Z:20' | samtools view -bS - > TACAAG.mouse12.bam
+bowtie2 -x bowtie2_ind_knouse.71878 -U ../011722-crispr/2021_feb_adult_pilot/originals/TGACAT.mouse15.fq -3 30 --nofw --no-unal | egrep '^@SQ|^@PG|MD:Z:20' | samtools view -bS - > TGACAT.mouse15.bam
+bowtie2 -x bowtie2_ind_knouse.71878 -U ../011722-crispr/2021_feb_adult_pilot/originals/TTGACT.mouse13.fq -3 30 --nofw --no-unal | egrep '^@SQ|^@PG|MD:Z:20' | samtools view -bS - > TTGACT.mouse13.bam
+
+## Run alignments of BMC sequence files target
+
+bowtie2 -x bowtie2_ind_knouse.71878 -U data/220119Kno_D22-494_NA_sequence.fastq -3 55 --nofw --no-unal | egrep '^@SQ|^@PG|MD:Z:20' | samtools view -bS - > d494_post.bam
+bowtie2 -x bowtie2_ind_knouse.71878 -U data/220119Kno_D22-495_NA_sequence.fastq -3 55 --nofw --no-unal | egrep '^@SQ|^@PG|MD:Z:20' | samtools view -bS - > d495_post.bam
+bowtie2 -x bowtie2_ind_knouse.71878 -U data/220119Kno_D22-496_NA_sequence.fastq -3 55 --nofw --no-unal | egrep '^@SQ|^@PG|MD:Z:20' | samtools view -bS - > d496_post.bam
+bowtie2 -x bowtie2_ind_knouse.71878 -U data/220119Kno_D22-497_NA_sequence.fastq -3 55 --nofw --no-unal | egrep '^@SQ|^@PG|MD:Z:20' | samtools view -bS - > d497_post.bam
+bowtie2 -x bowtie2_ind_knouse.71878 -U data/220119Kno_D22-498_NA_sequence.fastq -3 55 --nofw --no-unal | egrep '^@SQ|^@PG|MD:Z:20' | samtools view -bS - > d498_post.bam
+bowtie2 -x bowtie2_ind_knouse.71878 -U data/220119Kno_D22-499_NA_sequence.fastq -3 55 --nofw --no-unal | egrep '^@SQ|^@PG|MD:Z:20' | samtools view -bS - > d499_post.bam
+bowtie2 -x bowtie2_ind_knouse.71878 -U data/220119Kno_D22-500_NA_sequence.fastq -3 55 --nofw --no-unal | egrep '^@SQ|^@PG|MD:Z:20' | samtools view -bS - > d500_post.bam
+bowtie2 -x bowtie2_ind_knouse.71878 -U data/220119Kno_D22-501_NA_sequence.fastq -3 55 --nofw --no-unal | egrep '^@SQ|^@PG|MD:Z:20' | samtools view -bS - > d501_post.bam
+bowtie2 -x bowtie2_ind_knouse.71878 -U data/220119Kno_D22-502_NA_sequence.fastq -3 55 --nofw --no-unal | egrep '^@SQ|^@PG|MD:Z:20' | samtools view -bS - > d502_pre.bam
+bowtie2 -x bowtie2_ind_knouse.71878 -U data/220119Kno_D22-503_NA_sequence.fastq -3 55 --nofw --no-unal | egrep '^@SQ|^@PG|MD:Z:20' | samtools view -bS - > d503_pre.bam
+bowtie2 -x bowtie2_ind_knouse.71878 -U data/220119Kno_D22-504_NA_sequence.fastq -3 55 --nofw --no-unal | egrep '^@SQ|^@PG|MD:Z:20' | samtools view -bS - > d504_pre.bam
+bowtie2 -x bowtie2_ind_knouse.71878 -U data/220119Kno_D22-505_NA_sequence.fastq -3 55 --nofw --no-unal | egrep '^@SQ|^@PG|MD:Z:20' | samtools view -bS - > d505_pre.bam
+bowtie2 -x bowtie2_ind_knouse.71878 -U data/220119Kno_D22-506_NA_sequence.fastq -3 55 --nofw --no-unal | egrep '^@SQ|^@PG|MD:Z:20' | samtools view -bS - > d506_pre.bam
+bowtie2 -x bowtie2_ind_knouse.71878 -U data/220119Kno_D22-507_NA_sequence.fastq -3 55 --nofw --no-unal | egrep '^@SQ|^@PG|MD:Z:20' | samtools view -bS - > d507_pre.bam
+bowtie2 -x bowtie2_ind_knouse.71878 -U data/220119Kno_D22-508_NA_sequence.fastq -3 55 --nofw --no-unal | egrep '^@SQ|^@PG|MD:Z:20' | samtools view -bS - > d508_pre.bam
+bowtie2 -x bowtie2_ind_knouse.71878 -U data/220119Kno_D22-509_NA_sequence.fastq -3 55 --nofw --no-unal | egrep '^@SQ|^@PG|MD:Z:20' | samtools view -bS - > d509_pre.bam
+
+#########################################
+##prepare sample-level count table
+##NOTE ensure sample labels and fastq files are correctly aligned in lists
+
+## Pre/Post experiment
+
+mageck count -l sgRNA_to_Gene.csv -n PrePost --norm-method median \
+--sample-label Post1,Post2,Post3,Post4,Post5,Post6,Post7,Post8,Pre9,Pre10,Pre11,Pre12,Pre13,Pre14,Pre15,Pre16,induction \
+--fastq d494_post.bam d495_post.bam d496_post.bam d497_post.bam d498_post.bam d499_post.bam d500_post.bam d501_post.bam \
+d502_pre.bam d503_pre.bam d504_pre.bam d505_pre.bam d506_pre.bam d507_pre.bam d508_pre.bam d509_pre.bam GGACGG.induction.bam
+
+## Neonate experiment
+
+mageck count -l sgRNA_to_Gene.csv -n neonate --norm-method median \
+--sample-label plas,ind.n1256,n3,n4,n7,n8 \
+--fastq plasmid.TTGACT.bam GGACGG.induction.bam GCGGAC.mouse3.bam GGAACT.mouse4.bam CTCTAC.mouse7.bam TTGACT.mouse8.bam
+
+## Adult experiment
+
+mageck count -l sgRNA_to_Gene.csv -n adult --norm-method median \
+--sample-label ind.a9,ind.a10,ind.a13,ind.a14,a11,a12,a15,a16 \
+--fastq CTGATC.mouse9.bam AAGCTA.mouse10.bam TTGACT.mouse13.bam GGAACT.mouse14.bam GTAGCC.mouse11.bam TACAAG.mouse12.bam TGACAT.mouse15.bam GGACGG.mouse16.bam
+
+##########################################
+## testing for differential guides
+
+# in first run I only have the induction sample for variance estimation and need at least 2. so I pulled following argument out:
+# --variance-estimation-samples induction
+
+mageck test -k PrePost.count.txt --control-sgrna ctrl_sgrnas.6017.txt -c induction -t Pre9,Pre10,Pre11,Pre12,Pre13,Pre14,Pre15,Pre16 \
+--gene-test-fdr-threshold 0.05 --adjust-method fdr --gene-lfc-method median --normcounts-to-file -n PrevInduction
+
+mageck test -k PrePost.count.txt --control-sgrna ctrl_sgrnas.6017.txt \
+-c Pre9,Pre10,Pre11,Pre12,Pre13,Pre14,Pre15,Pre16 -t Post1,Post2,Post3,Post4,Post5,Post6,Post7,Post8 \
+--gene-test-fdr-threshold 0.05 --adjust-method fdr --variance-estimation-samples Pre9,Pre10,Pre11,Pre12,Pre13,Pre14,Pre15,Pre16 --gene-lfc-method median \
+--normcounts-to-file -n PostvPre
+
+## Re-run of heather's mouse7 test with just induction
+
+mageck test -k neonate.count.txt --control-sgrna ctrl_sgrnas.6017.txt \
+-c ind.n1256 -t n7 \
+--gene-test-fdr-threshold 0.05 --adjust-method fdr --gene-lfc-method median \
+--normcounts-to-file -n n7_v_ind.n1256
+
+## Exact re-run of heather's test using both induction and plasmid as controls
+
+mageck test -k neonate.count.txt --control-sgrna ctrl_sgrnas.6017.txt \
+-c ind.n1256,plas -t n7 \
+--gene-test-fdr-threshold 0.05 --variance-estimation-samples ind.n1256,plas --adjust-method fdr --gene-lfc-method median \
+--normcounts-to-file -n n7_v_ind.n1256plusPlas
+
+mageck test -k neonate.count.txt --control-sgrna ctrl_sgrnas.6017.txt \
+-c ind.n1256,plas -t n4 \
+--gene-test-fdr-threshold 0.05 --variance-estimation-samples ind.n1256,plas --adjust-method fdr --gene-lfc-method median \
+--normcounts-to-file -n n4_v_ind.n1256plusPlas
+
+###################################
+## run mageck mle
+
+mageck mle -k PrePost.count.txt -d design.txt -n mle_PreVPost_cont --norm-method control --control-sgrna ctrl_sgrnas.6017.txt
+
+mageck mle -k PrePost.count.txt -d design.txt -n mle_PreVPost_med --norm-method median
+
+mageck mle -k PrePost.count.txt -d design.txt -n mle_PreVPost_tot --norm-method total
+
+###################################
+## Running mageck test with --paired
+## First run mageck test with no controls
+
+## total normalization
+
+mageck test -k PrePost.count.txt --norm-method total \
+-c Pre9,Pre10,Pre11,Pre12,Pre13,Pre14,Pre15,Pre16 -t Post1,Post2,Post3,Post4,Post5,Post6,Post7,Post8 \
+--gene-test-fdr-threshold 0.05 --adjust-method fdr --variance-estimation-samples Pre9,Pre10,Pre11,Pre12,Pre13,Pre14,Pre15,Pre16 --gene-lfc-method median \
+--normcounts-to-file -n PostvPre_tot
+
+mageck test -k PrePost.count.txt --norm-method total --paired \
+-c Pre9,Pre10,Pre11,Pre12,Pre13,Pre14,Pre15,Pre16 -t Post1,Post2,Post3,Post4,Post5,Post6,Post7,Post8 \
+--gene-test-fdr-threshold 0.05 --adjust-method fdr --variance-estimation-samples Pre9,Pre10,Pre11,Pre12,Pre13,Pre14,Pre15,Pre16 \
+--gene-lfc-method median --normcounts-to-file -n PostvPre_tot_paired
+
+## median normalization
+
+mageck test -k PrePost.count.txt --norm-method median \
+-c Pre9,Pre10,Pre11,Pre12,Pre13,Pre14,Pre15,Pre16 -t Post1,Post2,Post3,Post4,Post5,Post6,Post7,Post8 \
+--gene-test-fdr-threshold 0.05 --adjust-method fdr --variance-estimation-samples Pre9,Pre10,Pre11,Pre12,Pre13,Pre14,Pre15,Pre16 --gene-lfc-method median \
+--normcounts-to-file -n PostvPre_med
+
+mageck test -k PrePost.count.txt --norm-method median --paired \
+-c Pre9,Pre10,Pre11,Pre12,Pre13,Pre14,Pre15,Pre16 -t Post1,Post2,Post3,Post4,Post5,Post6,Post7,Post8 \
+--gene-test-fdr-threshold 0.05 --adjust-method fdr --variance-estimation-samples Pre9,Pre10,Pre11,Pre12,Pre13,Pre14,Pre15,Pre16 \
+--gene-lfc-method median --normcounts-to-file -n PostvPre_med_paired
+
+
+## control normalization
+
+mageck test -k PrePost.count.txt --norm-method control --control-sgrna ctrl_sgrnas.6017.txt \
+-c Pre9,Pre10,Pre11,Pre12,Pre13,Pre14,Pre15,Pre16 -t Post1,Post2,Post3,Post4,Post5,Post6,Post7,Post8 \
+--gene-test-fdr-threshold 0.05 --adjust-method fdr --variance-estimation-samples Pre9,Pre10,Pre11,Pre12,Pre13,Pre14,Pre15,Pre16 --gene-lfc-method median \
+--normcounts-to-file -n PostvPre_cont
+
+mageck test -k PrePost.count.txt --norm-method control --paired --control-sgrna ctrl_sgrnas.6017.txt \
+-c Pre9,Pre10,Pre11,Pre12,Pre13,Pre14,Pre15,Pre16 -t Post1,Post2,Post3,Post4,Post5,Post6,Post7,Post8 \
+--gene-test-fdr-threshold 0.05 --adjust-method fdr --variance-estimation-samples Pre9,Pre10,Pre11,Pre12,Pre13,Pre14,Pre15,Pre16 --gene-lfc-method median \
+--normcounts-to-file -n PostvPre_cont_paired

@@ -1,0 +1,6 @@
+"0",""
+"0","BM_cd19.10m_v_egfr.15m.gdata$Rank = rank(BM_cd19.10m_v_egfr.15m.gdata$Score)"
+"0","ScatterView(BM_cd19.10m_v_egfr.15m.gdata, x = ""Rank"", y = ""Score"", label = ""id"", "
+"0","                 top = 10, auto_cut_y = TRUE, ylab = ""Log2FC"", "
+"0","                 groups = c(""top"", ""bottom""), max.overlaps = Inf) + "
+"0","  ggtitle(""BM_cd19.10m_v_egfr.15m"") + theme(plot.title = element_text(size = 12, face = ""bold""))"

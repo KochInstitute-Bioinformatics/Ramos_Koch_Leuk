@@ -1,0 +1,177 @@
+---
+title: "RNA Seq Class Metadata"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+# load libraries
+```{r}
+library(openxlsx)
+library(ggplot2)
+library(tidyverse)
+library(reprex)
+library(matrixStats)
+library(XML)
+library(ggrepel)
+library(DESeq2)
+library(ComplexHeatmap)
+library(dplyr)
+library(readxl)
+library(tximport)
+library(edgeR)
+library(openxlsx)
+library(readxl)
+library(readr)
+library(apeglm)
+
+source('X:/charliew/RNAseq-Class/R_code/data_formatting_tools.R')
+source('X:/charliew/RNAseq-Class/R_code/analysis_tools.R')
+source('X:/charliew/RNAseq-Class/R_code/plots.R')
+
+options(scipen = 999)
+```
+
+# location and initialize file locations
+```{r}
+setwd("X:/charliew/RNAseq-Class/")
+
+metadata_dir <- "W:/projects/tavacoli-Li/211207LiH/metadata/" # diractory to store infosite metadata and QC figures
+salmon_dir <- 'W:/projects/tavacoli-Li/211207LiH/salmon/' # directory to store salmon script alignment files from salmon
+deseq_dir <- 'W:/projects/tavacoli-Li/211207LiH/deseq_dpradhan/' # directory to store deseq2 results
+figure_dir <- 'W:/projects/tavacoli-Li/211207LiH/figures/'
+data_dir <- 'W:/projects/tavacoli-Li/211207LiH/data/'
+gsea_dir <- 'W:/projects/tavacoli-Li/211207LiH/gsea/'
+
+alignment_target <- "/net/ostrom/data/bcc/charliew/RNAseq-Class/hg38_ens105_1.6/hg38_ens105/" # salmon alignment target
+
+# tx2genefile <- "X:/dpradhan/pipelinedev/mm10_ens100_geneID_to_Type_MGI.xlsx"
+orthologyfile <- "W:/projects/tavacoli-Li/211207LiH/salmon/HuMoOrthology020822.xlsx"
+tx2genefile <- 'W:/projects/tavacoli-Li/211207LiH/salmon/mm10_ens105_txID_to_geneID.xlsx'
+id2symfile <- 'W:/projects/tavacoli-Li/211207LiH/salmon/mm10_ens105_geneID_to_Type_MGI.xlsx'
+infosite_loc <- '' # this should ideally be a /net/ostrom/... etc full path to the infosite qc file
+```
+
+# read in QC info from Infosite
+```{r}
+
+table <- readHTMLTable(infosite_loc) # infosite file
+
+for (i in 1:length(table)){
+  table[[i]] <- name_cols(table[[i]])
+}
+
+# the numbers (11 and 14) would be adjusted based on the index file; they differ based on the number of projects run on the flow cell
+
+table1 <- table[[5]]
+table2 <- table[[9]]
+table2 <- table2[,-grep('Project ID',colnames(table2))]
+
+metadata <- merge(table1, table2, by = 'Sample ID')
+
+metadata$ReadCount <- unlist(lapply(metadata$`Reads (% of lane)`, FUN = function(x){strsplit(x, split = ' ')[[1]][1] %>% gsub(pattern = ',', replacement = '') %>% as.numeric}))
+metadata$ReadPercent  <- unlist(lapply(metadata$`Reads (% of lane)`, FUN = function(x){strsplit(x, split = ' ')[[1]][2] %>% gsub(pattern = '\\(|\\)', replacement = '') %>% as.numeric}))
+
+metadata$AlignCount <- unlist(lapply(metadata$`Aligned (%)`, FUN = function(x){strsplit(x, split = ' ')[[1]][1] %>% gsub(pattern = ',', replacement = '') %>% as.numeric}))
+metadata$AlignPercent  <- unlist(lapply(metadata$`Aligned (%)`, FUN = function(x){strsplit(x, split = ' ')[[1]][2] %>% gsub(pattern = '\\(|\\)', replacement = '') %>% as.numeric}))
+
+metadata$`sense/ antisense` <- as.numeric(metadata$`sense/ antisense`)
+metadata$`rRNA %` <- metadata$`rRNA %` %>% gsub(pattern = '%', replacement = '') %>% as.numeric
+metadata$`Genes Detected` <- metadata$`Genes Detected` %>% gsub(pattern = '%', replacement = '') %>% as.numeric
+
+```
+
+# append experimental info
+
+the user should have a table describing the experimental conditions for each sample
+this table shold match up with the sample names from the QC data
+read in the experimental data and join with the QC metadata
+
+```{r}
+exp_info <- read_excel('X:/charliew/RNAseq-Class/documents/conditions.xlsx') %>% as.data.frame()
+metadata <- merge(metadata, exp_info, by.x = 'Sample name', by.y = 'concatenated names')
+metadata <- metadata[order(metadata$`Sample ID`),]
+```
+
+# plot and save metadata figures
+
+plot and output figures for rna-seq qc stats:
+read percent per sample, read coutn per sample, align percent per sample, alignment count, sense/antisense ratio, RNA contamination, genes detected
+
+```{r}
+setwd(metadata_dir)
+
+# read percent distribution (within flow cell)
+ggplot(metadata, mapping = aes(x = `Project ID`,y = ReadPercent, fill = `Project ID`)) + geom_violin() + ggtitle('Read Percent Distribution')
+ggsave('readPercent.pdf')
+
+# read count distribution
+ggplot(metadata, mapping = aes(x = `Project ID`,y = ReadCount, fill = `Project ID`)) + geom_violin() + ggtitle('Read Count Distribution')
+ggsave('readCount.pdf')
+
+# alignment percent distribution
+ggplot(metadata, mapping = aes(x = `Project ID`,y = AlignPercent, fill = `Project ID`)) + geom_violin() + ggtitle('Align Percent Distribution')
+ggsave('AlignPercent.pdf')
+
+# alignment percent distribution in boxplot
+metadata %>%
+  group_by(`Project ID`) %>%
+  mutate(outlier = is_outlier(AlignPercent)) %>% 
+  mutate(name = ifelse(outlier, `Sample ID`, as.numeric(NA))) %>%
+  ggplot(., aes(x = `Project ID`, y = AlignPercent, fill = `Project ID`)) +
+  geom_boxplot() +
+  # geom_text(aes(label = outlier), na.rm = TRUE, hjust = -0.3) +
+  geom_label_repel(aes(label = name)) + ggtitle('Align Percent Distribution')
+ggsave('AlignPercent_box.pdf')
+
+# alignment count
+ggplot(metadata, mapping = aes(x = `Project ID`,y = AlignCount, fill = `Project ID`)) + geom_violin() + ggtitle('Align Count Distribution')
+ggsave('AlignCount.pdf')
+
+# sense / antisense ratio
+ggplot(metadata, mapping = aes(x = `Project ID`,y = `sense/ antisense`, fill = `Project ID`)) + geom_violin() + ggtitle('Sense/Antisense Distribution')
+ggsave('SenseAntisense.pdf')
+
+# rRNA contamination percent
+ggplot(metadata, mapping = aes(x = `Project ID`,y = `rRNA %`, fill = `Project ID`)) + geom_violin() + ggtitle('rRNA Contamination Percent Distribution')
+ggsave('rRNAPercent.pdf')
+
+# rRNA contamination percent
+metadata %>%
+  group_by(`Project ID`) %>%
+  mutate(outlier = is_outlier(`rRNA %`)) %>% 
+  mutate(name = ifelse(outlier, `Sample ID`, as.numeric(NA))) %>%
+  ggplot(., aes(x = `Project ID`, y = `rRNA %`, fill = `Project ID`)) +
+  geom_boxplot() +
+  # geom_text(aes(label = outlier), na.rm = TRUE, hjust = -0.3) +
+  geom_label_repel(aes(label = name)) + ggtitle('rRNA Contamination Percent Distribution')
+ggsave('rRNAPercent_box.pdf')
+
+# genes detected
+metadata %>%
+  group_by(`Project ID`) %>%
+  mutate(outlier = is_outlier(`Genes Detected`)) %>% 
+  mutate(name = ifelse(outlier, `Sample ID`, as.numeric(NA))) %>%
+  ggplot(., aes(x = `Project ID`, y = `Genes Detected`, fill = `Project ID`)) +
+  geom_boxplot() +
+  # geom_text(aes(label = outlier), na.rm = TRUE, hjust = -0.3) +
+  geom_label_repel(aes(label = `Sample name`)) + ggtitle('Genes Detected Distribution')
+ggsave('GenesDetected.pdf')
+
+
+```
+
+# write metadata to file
+```{r}
+setwd(metadata_dir)
+write.csv(metadata, 'metadata.csv', row.names = FALSE)
+```
+

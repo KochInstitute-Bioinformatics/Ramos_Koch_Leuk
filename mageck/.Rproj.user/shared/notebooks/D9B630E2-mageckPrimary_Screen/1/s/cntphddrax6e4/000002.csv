@@ -1,0 +1,2 @@
+"0","mmKEGG <- read_excel(""../Documents/Mm_GeneSym_KEGG_association.xlsx"")"
+"0","mmKEGG.toJoin <- mmKEGG %>% select(MmSym,KEGG_Flag) %>% filter(KEGG_Flag == 'yes')"

@@ -1,0 +1,2 @@
+"0","biocarta.ifng <-read_excel(""../Documents/BIOCARTA_IFNG_PATHWAY.xlsx"")"
+"0","hallmark.ifng <-read_excel(""../Documents/HALLMARK_INTERFERON_GAMMA_RESPONSE.xlsx"")"

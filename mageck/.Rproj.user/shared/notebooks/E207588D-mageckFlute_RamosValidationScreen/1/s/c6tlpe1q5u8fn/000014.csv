@@ -1,0 +1,7 @@
+"0","# Add in BM"
+"0",""
+"0","fig2g <- ggarrange(SP.10m.Score.GOIplot,BM.15m.Score.GOIplot,BM.10m.Score.GOIplot,ET.1.2.Score.GOIplot,ET.1.10.Score.GOIplot,"
+"0","                   SP.10m.Score.TOPplot,BM.15m.Score.TOPplot,BM.10m.Score.TOPplot,ET.1.2.Score.TOPplot,ET.1.10.Score.TOPplot,"
+"0","                    ncol=5, nrow=2)"
+"0",""
+"0","fig2g"

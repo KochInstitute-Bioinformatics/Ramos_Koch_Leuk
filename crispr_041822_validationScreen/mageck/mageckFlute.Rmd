@@ -1,0 +1,279 @@
+---
+title: "Keene - Data preparation and MAGEcK Flute"
+author: "Charlie Whittaker"
+date: "4/18/2022"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 2
+  html_notebook: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(tidy=FALSE, cache=TRUE,
+                      dev="png", message=FALSE, error=FALSE, warning=TRUE)
+```
+
+# Load libraries
+
+```{r, warning=FALSE,error=FALSE,message=FALSE}
+library(openxlsx)
+library(ggplot2)
+library(tidyverse)
+library(reprex)
+library(matrixStats)
+library(XML)
+library(ggrepel)
+library(DESeq2)
+library(apeglm)
+library(ComplexHeatmap)
+library(dplyr)
+library(readxl)
+library(readr)
+library(tximport)
+library(edgeR)
+library(MAGeCKFlute)
+library(clusterProfiler)
+library(extrafont)
+loadfonts(device = "win")
+```
+
+# Count QC
+
+```{r}
+# countsummary <- read.delim("PrePost.countsummary.txt", check.names = FALSE)
+# 
+# BarView(countsummary, x = "Label", y = "GiniIndex",
+#         ylab = "Gini index", main = "Evenness of sgRNA reads")
+# 
+# countsummary$Missed = log10(countsummary$Zerocounts)
+# BarView(countsummary, x = "Label", y = "Missed", fill = "#394E80",
+#         ylab = "Log10 missed gRNAs", main = "Missed sgRNAs")
+# 
+# MapRatesView(countsummary)
+```
+
+# Running full FluteRRA pipeline
+
+```{r}
+#file1 = file.path(system.file("extdata", package = "MAGeCKFlute"),
+#                  "PostvPre.gene_summary.txt")
+## path to the sgRNA summary file (optional)
+#file2 = file.path(system.file("extdata", package = "MAGeCKFlute"),
+#                  "PostvPre.sgrna_summary.txt")
+
+#FluteRRA("PostvPre.gene_summary.txt",incorporateDepmap = FALSE, keytype = "Symbol", proj="PostVPre", organism="mmu", outdir = "./")
+#FluteRRA("PostvPre.gene_summary.txt", "PostvPre.sgrna_summary.txt"", proj="PostVPre_plus_sgRNA", organism="mmu", outdir = "./")
+```
+
+# Import count tables including samples to be excluded
+
+```{r}
+p1p2.counts <- read.xlsx("klabbott_countsPlusGeneClean.xlsx")
+```
+
+# Importing normalized input data for KA experiments, l2 transform
+
+
+```{r}
+MPM_5_v_RPMI_5.n <- read.table("MPM_5_v_RPMI_5.normalized.txt", row.names = 1, sep = "\t", header = TRUE)
+MPM_21_v_RPMI_21.n <- read.table("MPM_21_v_RPMI_21.normalized.txt", row.names = 1, sep = "\t", header = TRUE)
+RPMI_5_v_RPMI_21.n <- read.table("RPMI_5_v_RPMI_21.normalized.txt", row.names = 1, sep = "\t", header = TRUE)
+MPM_5_v_MPM_21 <- read.table("MPM_5_v_MPM_21.normalized.txt", row.names = 1, sep = "\t", header = TRUE)
+```
+
+## All 12 of KA samples are in the first 2 files
+
+```{r}
+MPM_5_v_RPMI_5.n <- MPM_5_v_RPMI_5.n %>% select(-Gene)
+MPM_21_v_RPMI_21.n <- MPM_21_v_RPMI_21.n %>% select(-Gene)
+RPMI_5_v_RPMI_21.n <- RPMI_5_v_RPMI_21.n %>% select(-Gene)
+MPM_5_v_MPM_21 <- MPM_5_v_MPM_21 %>% select(-Gene)
+
+KA.counts <- p1p2.counts %>% select(sgRNA,contains("KA"))
+
+rownames(KA.counts) <- KA.counts[,1]
+KA.counts <- KA.counts %>% select(-sgRNA)
+
+KA.all <- transform(merge(x=MPM_5_v_RPMI_5.n,y=MPM_21_v_RPMI_21.n, by=0, all=TRUE), row.names=Row.names, Row.names=NULL)
+
+KA.all.l2 <- log((KA.all+1),2)
+colnames(KA.all.l2)<-paste(colnames(KA.all.l2),"l2",sep=".")
+```
+
+## Write normalized data
+
+```{r}
+KA.ct.l2 <- transform(merge(x=KA.counts,y=KA.all.l2, by=0, all=TRUE), row.names=Row.names, Row.names=NULL)
+KA.ct.l2 <- tibble::rownames_to_column(KA.ct.l2, "sgRNA")
+write.xlsx(KA.ct.l2, file="KA.ct.l2.xlsx", overwrite = TRUE, rowNames=TRUE)
+```
+
+# new QC bolxplots
+
+```{r}
+ggplot(stack(KA.all.l2), aes(x = ind, y = values)) + geom_boxplot() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + ggtitle("KA log2 normalized") 
+```
+
+## get some QC stats
+
+```{r}
+KA.iqr <- as.data.frame(sapply(KA.all.l2, IQR))
+KA.med <- as.data.frame(sapply(KA.all.l2, median))
+KA.0 <- as.data.frame(colSums(KA.all.l2 == 0))
+KA.stats <- cbind(KA.0,KA.med,KA.iqr)
+
+write.xlsx(KA.stats, file="KA.stats.xlsx", overwrite = TRUE, rowNames=TRUE)
+```
+
+## Calculate group averages
+
+not applicable for this experiment
+
+```{r}
+# p12.Means <- p12.all.l2 %>% mutate(input.mean = select(., contains("input")) %>% rowMeans(na.rm = TRUE))
+# p12.Means <- p12.Means %>% mutate(egfr.mean = select(., contains("egfr")) %>% rowMeans(na.rm = TRUE))
+# p12.Means <- p12.Means %>% mutate(cd19.mean = select(., contains("cd19")) %>% rowMeans(na.rm = TRUE))
+# p12.Means <- p12.Means %>% select(contains("mean"))
+# write.xlsx(p12.Means, file="p12.Means.xlsx", overwrite = TRUE, rowNames=TRUE)
+```
+
+# Importing mageck test data and making plots
+
+## MPM_21_v_RPMI_21
+
+```{r,fig.height=4,fig.width=8}
+MPM_21_v_RPMI_21.gdata <- ReadRRA("MPM_21_v_RPMI_21.gene_summary.txt", score = c("lfc", "rra")[1])
+MPM_21_v_RPMI_21.sdata <- ReadsgRRA("MPM_21_v_RPMI_21.sgrna_summary.txt")
+
+MPM_21_v_RPMI_21.gdata$negLogFDR = -log10(MPM_21_v_RPMI_21.gdata$FDR)
+ScatterView(MPM_21_v_RPMI_21.gdata, x = "Score", y = "negLogFDR", 
+            label = "id", model = "volcano", top = 8,
+            display_cut = TRUE, max.overlaps = Inf)
+
+MPM_21_v_RPMI_21.gdata$Rank = rank(MPM_21_v_RPMI_21.gdata$Score)
+ScatterView(MPM_21_v_RPMI_21.gdata, x = "Rank", y = "Score", label = "id", 
+                 top = 6, auto_cut_y = TRUE, ylab = "Log2FC", 
+                 groups = c("top", "bottom"), max.overlaps = Inf)
+
+ScatterView(MPM_21_v_RPMI_21.gdata, x = "Score", y = "Rank", label = "id", 
+            auto_cut_x = TRUE, groups = c("left", "right"), 
+            xlab = "Log2FC", top = 6, max.overlaps = Inf)
+```
+
+## MPM_5_v_RPMI_5
+
+```{r,fig.height=4,fig.width=8}
+MPM_5_v_RPMI_5.gdata <- ReadRRA("MPM_5_v_RPMI_5.gene_summary.txt", score = c("lfc", "rra")[1])
+MPM_5_v_RPMI_5.sdata <- ReadsgRRA("MPM_5_v_RPMI_5.sgrna_summary.txt")
+
+MPM_5_v_RPMI_5.gdata$negLogFDR = -log10(MPM_5_v_RPMI_5.gdata$FDR)
+ScatterView(MPM_5_v_RPMI_5.gdata, x = "Score", y = "negLogFDR", 
+            label = "id", model = "volcano", top = 8,
+            display_cut = TRUE, max.overlaps = Inf)
+
+MPM_5_v_RPMI_5.gdata$Rank = rank(MPM_5_v_RPMI_5.gdata$Score)
+ScatterView(MPM_5_v_RPMI_5.gdata, x = "Rank", y = "Score", label = "id", 
+                 top = 6, auto_cut_y = TRUE, ylab = "Log2FC", 
+                 groups = c("top", "bottom"), max.overlaps = Inf)
+
+ScatterView(MPM_5_v_RPMI_5.gdata, x = "Score", y = "Rank", label = "id", 
+            auto_cut_x = TRUE, groups = c("left", "right"), 
+            xlab = "Log2FC", top = 6, max.overlaps = Inf)
+```
+
+## RPMI_5_v_RPMI_21
+
+```{r,fig.height=4,fig.width=8}
+RPMI_5_v_RPMI_21.gdata <- ReadRRA("RPMI_5_v_RPMI_21.gene_summary.txt", score = c("lfc", "rra")[1])
+RPMI_5_v_RPMI_21.sdata <- ReadsgRRA("RPMI_5_v_RPMI_21.sgrna_summary.txt")
+
+RPMI_5_v_RPMI_21.gdata$negLogFDR = -log10(RPMI_5_v_RPMI_21.gdata$FDR)
+ScatterView(RPMI_5_v_RPMI_21.gdata, x = "Score", y = "negLogFDR", 
+            label = "id", model = "volcano", top = 8,
+            display_cut = TRUE, max.overlaps = Inf)
+
+RPMI_5_v_RPMI_21.gdata$Rank = rank(RPMI_5_v_RPMI_21.gdata$Score)
+ScatterView(RPMI_5_v_RPMI_21.gdata, x = "Rank", y = "Score", label = "id", 
+                 top = 6, auto_cut_y = TRUE, ylab = "Log2FC", 
+                 groups = c("top", "bottom"), max.overlaps = Inf)
+
+ScatterView(RPMI_5_v_RPMI_21.gdata, x = "Score", y = "Rank", label = "id", 
+            auto_cut_x = TRUE, groups = c("left", "right"), 
+            xlab = "Log2FC", top = 6, max.overlaps = Inf)
+```
+
+## MPM_5_v_MPM_21
+
+```{r,fig.height=4,fig.width=8}
+MPM_5_v_MPM_21.gdata <- ReadRRA("MPM_5_v_MPM_21.gene_summary.txt", score = c("lfc", "rra")[1])
+MPM_5_v_MPM_21.sdata <- ReadsgRRA("MPM_5_v_MPM_21.sgrna_summary.txt")
+
+MPM_5_v_MPM_21.gdata$negLogFDR = -log10(MPM_5_v_MPM_21.gdata$FDR)
+ScatterView(MPM_5_v_MPM_21.gdata, x = "Score", y = "negLogFDR", 
+            label = "id", model = "volcano", top = 8,
+            display_cut = TRUE, max.overlaps = Inf)
+
+MPM_5_v_MPM_21.gdata$Rank = rank(MPM_5_v_MPM_21.gdata$Score)
+ScatterView(MPM_5_v_MPM_21.gdata, x = "Rank", y = "Score", label = "id", 
+                 top = 6, auto_cut_y = TRUE, ylab = "Log2FC", 
+                 groups = c("top", "bottom"), max.overlaps = Inf)
+
+ScatterView(MPM_5_v_MPM_21.gdata, x = "Score", y = "Rank", label = "id", 
+            auto_cut_x = TRUE, groups = c("left", "right"), 
+            xlab = "Log2FC", top = 6, max.overlaps = Inf)
+```
+
+# Depmap test
+
+Not relevant here, probably need to map to human symbols for this to work
+
+```{r}
+# depmap_similarity = ResembleDepmap(MPM_21_v_RPMI_21.gdata, symbol = "id", score = "Score")
+```
+
+# Viewing individual guides
+
+## MPM_21_v_RPMI_21
+
+```{r}
+sgRankView(MPM_21_v_RPMI_21.sdata, top = 3, bottom = 3)
+
+plotList <- MPM_21_v_RPMI_21.gdata %>% filter(abs(Score) > 1.2) %>% select(id)
+sgRankView(MPM_21_v_RPMI_21.sdata, top = 0, bottom = 0, gene=plotList$id)
+```
+
+## MPM_5_v_RPMI_5
+
+```{r}
+sgRankView(MPM_5_v_RPMI_5.sdata, top = 3, bottom = 3)
+
+plotList <- MPM_5_v_RPMI_5.gdata %>% filter(abs(Score) > 1.2) %>% select(id)
+sgRankView(MPM_5_v_RPMI_5.sdata, top = 0, bottom = 0, gene=plotList$id)
+```
+
+## RPMI_5_v_RPMI_21
+
+```{r}
+sgRankView(RPMI_5_v_RPMI_21.sdata, top = 3, bottom = 3)
+
+plotList <- RPMI_5_v_RPMI_21.gdata %>% filter(abs(Score) > 1.2) %>% select(id)
+sgRankView(RPMI_5_v_RPMI_21.sdata, top = 0, bottom = 0, gene=plotList$id)
+```
+
+## MPM_5_v_MPM_21
+
+```{r}
+sgRankView(MPM_5_v_MPM_21.sdata, top = 3, bottom = 3)
+
+plotList <- MPM_5_v_MPM_21.gdata %>% filter(abs(Score) > 1.2) %>% select(id)
+sgRankView(MPM_5_v_MPM_21.sdata, top = 0, bottom = 0, gene=plotList$id)
+```
+
+# write session info
+
+```{r}
+sessionInfo()
+writeLines(capture.output(sessionInfo()), "mageck_sessionInfo.txt")
+```

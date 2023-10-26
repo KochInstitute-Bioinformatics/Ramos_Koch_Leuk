@@ -1,0 +1,179 @@
+---
+title: "RNA Seq Class Metadata"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+# load libraries
+```{r}
+library(openxlsx)
+library(ggplot2)
+library(tidyverse)
+library(reprex)
+library(matrixStats)
+library(XML)
+library(ggrepel)
+library(DESeq2)
+library(ComplexHeatmap)
+library(dplyr)
+library(readxl)
+library(tximport)
+library(edgeR)
+library(openxlsx)
+library(readxl)
+library(readr)
+library(apeglm)
+
+source('X:/charliew/RNAseq-Class/R_code/data_formatting_tools.R')
+source('X:/charliew/RNAseq-Class/R_code/analysis_tools.R')
+source('X:/charliew/RNAseq-Class/R_code/plots.R')
+
+options(scipen = 999)
+```
+
+# location and initialize file locations
+```{r}
+setwd("X:/charliew/RNAseq-Class/")
+
+metadata_dir <- "W:/projects/tavacoli-Li/211207LiH/metadata/" # diractory to store infosite metadata and QC figures
+salmon_dir <- 'W:/projects/tavacoli-Li/211207LiH/salmon/' # directory to store salmon script alignment files from salmon
+deseq_dir <- 'W:/projects/tavacoli-Li/211207LiH/deseq_dpradhan/' # directory to store deseq2 results
+figure_dir <- 'W:/projects/tavacoli-Li/211207LiH/figures/'
+data_dir <- 'W:/projects/tavacoli-Li/211207LiH/data/'
+gsea_dir <- 'W:/projects/tavacoli-Li/211207LiH/gsea/'
+
+alignment_target <- "/net/ostrom/data/bcc/charliew/RNAseq-Class/hg38_ens105_1.6/hg38_ens105/" # salmon alignment target
+
+# tx2genefile <- "X:/dpradhan/pipelinedev/mm10_ens100_geneID_to_Type_MGI.xlsx"
+orthologyfile <- "W:/projects/tavacoli-Li/211207LiH/salmon/HuMoOrthology020822.xlsx"
+tx2genefile <- 'W:/projects/tavacoli-Li/211207LiH/salmon/mm10_ens105_txID_to_geneID.xlsx'
+id2symfile <- 'W:/projects/tavacoli-Li/211207LiH/salmon/mm10_ens105_geneID_to_Type_MGI.xlsx'
+infosite_loc <- '' # this should ideally be a /net/ostrom/... etc full path to the infosite qc file
+```
+
+# read in metadata
+```{r}
+setwd(metadata_dir)
+metadata <- read_excel('metadata.xlsx') %>% as.data.frame()
+```
+
+# salmon script generations (single end)
+
+generate the file to run slamon alignment
+
+write the bash script header: number of nodes, cpus, email notification, salmon version
+write the salmon command for each sample by taking teh base command and replace the fastq file(s), alignment target, and sample name
+
+```{r}
+library(dplyr)
+library(readxl)
+
+setwd(salmon_dir)
+
+n_samp <- nrow(metadata)
+# samp_prefix <- '210909Yil_D21-2801'
+
+files <- list.files(data_dir)
+
+# setup salmon command file
+salmon_file <- 'salmon_.sh'
+
+## salmon paired end setup
+##  setup sh file
+
+salmon_setup <- '#!/bin/bash
+#SBATCH -N 1                      # Number of nodes. You must always set -N 1 unless you receive special instruction from the system admin
+#SBATCH -n 16                      # Number of CPUs. Equivalent to the -pe whole_nodes 1 option in SGE
+#SBATCH --mail-type=END           # Type of email notification- BEGIN,END,FAIL,ALL. Equivalent to the -m option in SGE 
+#SBATCH --mail-user=dpradhan@mit.edu  # Email to which notifications will be sent.
+
+module add salmon/1.3.0
+
+'
+write(salmon_setup,file = salmon_file)
+
+# append commands for individual data files for salmon
+salmon_single_end_command <- "salmon --no-version-check quant --gcBias --validateMappings --incompatPrior 0.0 -i -alignment_target- -l -lib- -r -path_base--sample_file- -p 8 -o -sample_name-.quant"
+salmon_paired_end_command <- "salmon --no-version-check quant --gcBias --validateMappings --incompatPrior 0.0 -i -alignment_target- -l -lib- -1 -sample_1_file- -2 -sample_2_file- -p 8 -o -sample_name-.quant"
+lib <- 'A'
+# salmon --no-version-check quant --validateMappings --incompatPrior 0.0 -i [alignment_target] -l [library type] -1 [sample_1_file] -2 [sample_2_file] -p 8 -o outputfile<-[sample_name].quant
+path_base <- '/net/ostrom/data/bcc/charliew/RNAseq-Class/data/'
+
+for (i in files){
+  # sample_name <- paste0(samp_prefix, sprintf("%02d", i))
+  sample_file <- i
+  sample_name <- i %>% gsub(pattern = '_NA_sequence.fastq', replacement = '', x = .)
+  # sample_1_file <- paste0(path_base, sample_name, '_1_sequence.fastq')
+  # sample_2_file <- paste0(path_base, sample_name, '_2_sequence.fastq')
+  
+  # full_command <- paste0("salmon --no-version-check quant --validateMappings --incompatPrior 0.0 -i ", alignment_target,
+  #                        " -l A -1 ", sample_1_file, " -2 ", sample_2_file, " -p 8 -o ", sample_name,".quant") # previously A, changed to ISR after running
+  # full_command <- paste0("salmon --no-version-check quant --gcBias --validateMappings --incompatPrior 0.0 -i ", alignment_target,
+  #                        " -l A -r ", path_base, sample_file, " -p 8 -o ", sample_name,".quant") # previously A, changed to ISR after running
+  command <- salmon_single_end_command %>% gsub(pattern = '-alignment_target-', replacement = alignment_target) %>%
+    gsub('-lib-', replacement = lib) %>%
+    gsub('-path_base-', replacement = path_base) %>%
+    gsub('-sample_file-', replacement = sample_file) %>%
+    gsub('-sample_name-', replacement = sample_name)
+  # print(full_command)
+  write(full_command,file=salmon_file,append=TRUE)
+}
+```
+
+## build second salmon output table after running salmon
+```{r}
+library(rjson)
+
+setwd(salmon_dir)
+salmon_data <- c()
+
+# read data in json file from each .quant folder
+for (i in list.dirs(salmon_dir,recursive = FALSE)){
+  # sample_name <- metadata$`Sample ID`[i] %>% gsub(pattern = '-5349R', replacement = '', x = .) #paste0(samp_prefix, sprintf("%03d", i))
+  sample_name <- i %>% strsplit(., split = '\\/') %>% unlist() %>% 
+    grep(pattern = '.quant', value = TRUE) %>% 
+    gsub(pattern = '.gz.quant', replacement = '', .)
+  # salmon_output <- paste0(salmon_dir, metadata$`Project ID`[i], "_", sample_name, '.quant/lib_format_counts.json') %>% fromJSON(file = .) %>% as.data.frame
+  salmon_output <- paste0(i, '/lib_format_counts.json') %>% fromJSON(file = .) %>% as.data.frame
+  # row.names(salmon_output) <- sample_name
+  
+  salmon_data[[sample_name]] <- salmon_output
+  
+}
+
+# organize data into a table
+df <- do.call(rbind.data.frame, salmon_data)
+write.csv(df, file = 'lib_format_count_summary.csv')
+
+```
+
+# set up samples file
+```{r}
+setwd(salmon_dir)
+
+folders <- list.dirs(recursive = FALSE) %>% gsub(pattern = './', replacement = '')
+sample <- folders %>% gsub(pattern = '.quant', replacement = '')
+condition <- metadata$Condition #metadata$`Sample name`[order(metadata$`Sample ID`)] #metadata$Group[,] # %>% strsplit(x = ., split = ' ') %>% sapply(., '[[', 1)
+sample_file <- data.frame(Sample = sample, Folder = folders, Condition = condition)
+write.xlsx(sample_file, file = "samples.xlsx")
+```
+
+# run tximport
+```{r}
+setwd(salmon_dir)
+
+data <- salmon_process(dir = getwd(), tx_to_gene_file = tx2genefile, DGE = FALSE, output = TRUE)
+txi <- data$txi
+salmon_dat <- data$data
+saveRDS(txi, file = 'txi.RDS')
+
+```

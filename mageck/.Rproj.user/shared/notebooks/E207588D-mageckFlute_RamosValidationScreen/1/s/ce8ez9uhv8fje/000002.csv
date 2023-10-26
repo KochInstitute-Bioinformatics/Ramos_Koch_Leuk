@@ -1,0 +1,8 @@
+"0","#In vitro"
+"0","Av.df <- Av.df %>% mutate(cd19_1to2_v_egfr_1to2.fc = ((amCD19_1to2.av-Input1_DOI.av)-(ahEGFRv3_1to2.av-Input1_DOI.av)))"
+"0","Av.df <- Av.df %>% mutate(cd19_1to10_v_egfr_1to10.fc = ((amCD19_1to10.av-Input1_DOI.av)-(ahEGFRv3_1to10.av-Input1_DOI.av)))"
+"0","#In vivo"
+"0","Av.df <- Av.df %>% mutate(BM_cd19.15m_v_egfr.15m.fc = ((BM_cd19.15m.av-Input1_DOI.av)-(BM_egfr.15m.av-Input1_DOI.av)))"
+"0","Av.df <- Av.df %>% mutate(BM_cd19.10m_v_egfr.15m.fc = ((BM_cd19.10m.av-Input1_DOI.av)-(BM_egfr.15m.av-Input1_DOI.av)))"
+"0","Av.df <- Av.df %>% mutate(SP_cd19.15m_v_egfr.15m.fc = ((BM_cd19.15m.av-Input1_DOI.av)-(BM_egfr.15m.av-Input1_DOI.av)))"
+"0","Av.df <- Av.df %>% mutate(SP_cd19.10m_v_egfr.15m.fc = ((BM_cd19.10m.av-Input1_DOI.av)-(BM_egfr.15m.av-Input1_DOI.av)))"

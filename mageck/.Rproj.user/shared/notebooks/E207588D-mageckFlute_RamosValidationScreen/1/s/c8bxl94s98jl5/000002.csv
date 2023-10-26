@@ -1,0 +1,6 @@
+"0","cd19_1to2_v_egfr_1to2.fc.Gene <- Av.df %>% group_by(Gene) %>% summarize(cd19_1to2_v_egfr_1to2.fc.Gene = mean(cd19_1to2_v_egfr_1to2.fc, na.rm = TRUE))"
+"0","cd19_1to10_v_egfr_1to10.fc.Gene <- Av.df %>% group_by(Gene) %>% summarize(cd19_1to10_v_egfr_1to10.fc.Gene = mean(cd19_1to10_v_egfr_1to10.fc, na.rm = TRUE))"
+"0","BM_cd19.15m_v_egfr.15m.fc.Gene <- Av.df %>% group_by(Gene) %>% summarize(BM_cd19.15m_v_egfr.15m.fc.Gene = mean(BM_cd19.15m_v_egfr.15m.fc, na.rm = TRUE))"
+"0","BM_cd19.10m_v_egfr.15m.fc.Gene <- Av.df %>% group_by(Gene) %>% summarize(BM_cd19.10m_v_egfr.15m.fc.Gene = mean(BM_cd19.10m_v_egfr.15m.fc, na.rm = TRUE))"
+"0","SP_cd19.15m_v_egfr.15m.fc.Gene <- Av.df %>% group_by(Gene) %>% summarize(SP_cd19.15m_v_egfr.15m.fc.Gene = mean(SP_cd19.15m_v_egfr.15m.fc, na.rm = TRUE))"
+"0","SP_cd19.10m_v_egfr.15m.fc.Gene <- Av.df %>% group_by(Gene) %>% summarize(SP_cd19.10m_v_egfr.15m.fc.Gene = mean(SP_cd19.10m_v_egfr.15m.fc, na.rm = TRUE))"

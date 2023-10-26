@@ -1,0 +1,4 @@
+"0","all.n <- all.n %>% dplyr::select(-Gene)"
+"0","all.n.l2 <- log((all.n+1),2)"
+"0",""
+"0","colnames(all.n.l2)<-paste(colnames(all.n.l2),""l2"",sep=""."")"

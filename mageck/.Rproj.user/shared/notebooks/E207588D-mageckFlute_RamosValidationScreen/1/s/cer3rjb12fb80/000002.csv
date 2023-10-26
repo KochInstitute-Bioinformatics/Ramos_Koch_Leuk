@@ -1,0 +1,12 @@
+"0","```r
+# countsummary <- read.delim(\"PrePost.countsummary.txt\", check.names = FALSE)
+# 
+# BarView(countsummary, x = \"Label\", y = \"GiniIndex\",
+#         ylab = \"Gini index\", main = \"Evenness of sgRNA reads\")
+# 
+# countsummary$Missed = log10(countsummary$Zerocounts)
+# BarView(countsummary, x = \"Label\", y = \"Missed\", fill = \"#394E80\",
+#         ylab = \"Log10 missed gRNAs\", main = \"Missed sgRNAs\")
+# 
+# MapRatesView(countsummary)
+```"

@@ -1,0 +1,5 @@
+"0","# p12.Means <- p12.all.l2 %>% mutate(input.mean = select(., contains(""input"")) %>% rowMeans(na.rm = TRUE))"
+"0","# p12.Means <- p12.Means %>% mutate(egfr.mean = select(., contains(""egfr"")) %>% rowMeans(na.rm = TRUE))"
+"0","# p12.Means <- p12.Means %>% mutate(cd19.mean = select(., contains(""cd19"")) %>% rowMeans(na.rm = TRUE))"
+"0","# p12.Means <- p12.Means %>% select(contains(""mean""))"
+"0","# write.xlsx(p12.Means, file=""p12.Means.xlsx"", overwrite = TRUE, rowNames=TRUE)"

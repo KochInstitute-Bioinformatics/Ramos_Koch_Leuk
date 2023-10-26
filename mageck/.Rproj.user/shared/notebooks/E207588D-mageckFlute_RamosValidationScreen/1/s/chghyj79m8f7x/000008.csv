@@ -1,0 +1,7 @@
+"0","SP_cd19.10m_v_egfr.15m.gdata <- ReadRRA(""SP_cd19.10m_v_egfr.15m.gene_summary.txt"", score = c(""lfc"", ""rra"")[1])"
+"0","SP_cd19.10m_v_egfr.15m.sdata <- ReadsgRRA(""SP_cd19.10m_v_egfr.15m.sgrna_summary.txt"")"
+"0",""
+"0","SP_cd19.10m_v_egfr.15m.gdata$negLogFDR = -log10(SP_cd19.10m_v_egfr.15m.gdata$FDR)"
+"0","ScatterView(SP_cd19.10m_v_egfr.15m.gdata, x = ""Score"", y = ""negLogFDR"", "
+"0","            label = ""id"", model = ""volcano"", top = 15,"
+"0","            display_cut = TRUE, max.overlaps = Inf)"

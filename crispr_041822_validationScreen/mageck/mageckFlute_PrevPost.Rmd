@@ -1,0 +1,214 @@
+---
+title: "Xianyu PrevPost and MAGEcK Flute - Control Guide Normalization"
+author: "Charlie Whittaker"
+date: "3/4/2022"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 2
+  html_notebook: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(tidy=FALSE, cache=TRUE,
+                      dev="png", message=FALSE, error=FALSE, warning=TRUE)
+```
+
+# Load libraries
+
+```{r, warning=FALSE,error=FALSE,message=FALSE}
+library(openxlsx)
+library(ggplot2)
+library(tidyverse)
+library(reprex)
+library(matrixStats)
+library(XML)
+library(ggrepel)
+library(DESeq2)
+library(apeglm)
+library(ComplexHeatmap)
+library(dplyr)
+library(readxl)
+library(readr)
+library(tximport)
+library(edgeR)
+library(MAGeCKFlute)
+library(clusterProfiler)
+```
+
+# Count QC
+
+```{r}
+countsummary <- read.delim("PrePost.countsummary.txt", check.names = FALSE)
+
+BarView(countsummary, x = "Label", y = "GiniIndex",
+        ylab = "Gini index", main = "Evenness of sgRNA reads")
+
+countsummary$Missed = log10(countsummary$Zerocounts)
+BarView(countsummary, x = "Label", y = "Missed", fill = "#394E80",
+        ylab = "Log10 missed gRNAs", main = "Missed sgRNAs")
+
+MapRatesView(countsummary)
+```
+
+# Importing normalized data for QC boxplots
+
+```{r}
+##median
+PreVPost.norm <- read.table("PrePost.count_normalized.txt", row.names = 1, sep = "\t", header = TRUE)
+PreVPost.norm <- PreVPost.norm %>% select(-Gene)
+PreVPost.norm <- log((PreVPost.norm+1),2)
+ggplot(stack(PreVPost.norm), aes(x = ind, y = values)) + geom_boxplot() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + ggtitle("PreVPost log2 normalized") 
+PreVPost.norm.iqr <- as.data.frame(sapply(PreVPost.norm, IQR))
+write.xlsx(PreVPost.norm, file="PreVPost.l2norm.xlsx", rowNames=TRUE)
+##control
+PreVPost.cont <- read.table("PostvPre_cont_paired.normalized.txt", row.names = 1, sep = "\t", header = TRUE)
+PreVPost.cont <- PreVPost.cont %>% select(-Gene)
+PreVPost.cont <- log((PreVPost.cont+1),2)
+ggplot(stack(PreVPost.cont), aes(x = ind, y = values)) + geom_boxplot() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + ggtitle("PreVPost ControlGuide normalized") 
+PreVPost.cont.iqr <- as.data.frame(sapply(PreVPost.cont, IQR))
+##Raw
+PreVPost.raw <- read.table("PrePost.count.txt", row.names = 1, sep = "\t", header = TRUE)
+PreVPost.raw <- PreVPost.raw %>% select(-Gene)
+PreVPost.raw <- log((PreVPost.raw+1),2)
+ggplot(stack(PreVPost.raw), aes(x = ind, y = values)) + geom_boxplot() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + ggtitle("PreVPost Raw") 
+PreVPost.raw.iqr <- as.data.frame(sapply(PreVPost.raw, IQR))
+```
+
+## Assembling data for delivery table
+
+```{r}
+PreVPost.ct <- read.table("PrePost.count.txt", row.names = 1, sep = "\t", header = TRUE)
+```
+
+# Importing data and making volcano plots
+
+## PreVPost - paired
+
+```{r}
+PostvPre.gdata <- ReadRRA("PostvPre_cont_paired.gene_summary.txt", score = c("lfc", "rra")[1])
+PostvPre.sdata <- ReadsgRRA("PostvPre_cont_paired.sgrna_summary.txt")
+
+VolcanoView(PostvPre.gdata, x = "Score", y = "FDR", top = 10,
+                 alpha=1, x_cutoff = log2(1.5), y_cutoff = 0.1,
+                 mycolour = c("darkgrey", "#e41a1c", "#377eb8"),
+                 ylab = "-Log10(FDR)", Label = "id")
+
+```
+
+## PreVPost - paired, no variance estimation
+
+```{r}
+PostvPre.noVar.gdata <- ReadRRA("PostvPre_cont_paired_noVarEst.gene_summary.txt", score = c("lfc", "rra")[1])
+PostvPre.noVar.sdata <- ReadsgRRA("PostvPre_cont_paired_noVarEst.sgrna_summary.txt")
+
+VolcanoView(PostvPre.noVar.gdata, x = "Score", y = "FDR", top = 10,
+                 alpha=1, x_cutoff = log2(1.5), y_cutoff = 0.1,
+                 mycolour = c("darkgrey", "#e41a1c", "#377eb8"),
+                 ylab = "-Log10(FDR)", Label = "id")
+
+```
+
+## PreVPost - standard
+
+```{r}
+PostvPre.std.gdata <- ReadRRA("PostvPre_cont.gene_summary.txt", score = c("lfc", "rra")[1])
+PostvPre.std.sdata <- ReadsgRRA("PostvPre_cont.sgrna_summary.txt")
+
+VolcanoView(PostvPre.std.gdata, x = "Score", y = "FDR", top = 10,
+                 alpha=1, x_cutoff = log2(1.5), y_cutoff = 0.1,
+                 mycolour = c("darkgrey", "#e41a1c", "#377eb8"),
+                 ylab = "-Log10(FDR)", Label = "id")
+
+```
+
+# Rank Plots
+
+```{r}
+PostvPre.gdata$Rank = rank(PostvPre.gdata$Score)
+#p1 = ScatterView(gdata, x = "Rank", y = "Score", label = "id", 
+#                 top = 5, auto_cut_y = TRUE, ylab = "Log2FC", 
+#                 groups = c("top", "bottom"))
+#print(p1)
+
+geneList= PostvPre.gdata$Score
+names(geneList) = PostvPre.gdata$id
+#p2 = RankView(geneList, top = 5, bottom = 10)
+#p2 = RankView(geneList, top = 0, bottom = 0, genelist = c("Cul5", "Ube2f", "Pten","Stk11","Sik1","Abcb11"))
+#print(p2)
+
+RankView(geneList, top = 0, bottom = 0, genelist = c("Cul5", "Actr2", "Ube2f","Bach2","Stk11")) + theme(text=element_text(size=12, family="Sans"))
+
+
+```
+
+# sgRankView - paired
+
+```{r}
+p2 = sgRankView(PostvPre.sdata, top = 3, bottom = 3)
+print(p2)
+
+p2 = sgRankView(PostvPre.sdata, top = 0, bottom = 0, gene=c("Cul5", "Actr2", "Ube2f","Bach2","Stk11"))
+print(p2)
+```
+
+# One-sample ttest of pairwise fold changes
+
+```{r}
+pairwise.lfc <- read.xlsx("../031622_pairwise/PairwiseTests_FoldChanges.xlsx", rowNames=TRUE)
+
+for (row in 1:nrow(pairwise.lfc)) { 
+    pairwise.lfc$TtestP[row] <- t.test(pairwise.lfc[row,], mu = 0, alternative = "two.sided")$p.value 
+}
+
+write.xlsx(pairwise.lfc,file="pairwise.lfc_plusT.xlsx", rowNames=TRUE,overwrite = TRUE)
+```
+
+# Map mouse symbols to human symbols and prepare input for GSEA
+
+this was done manually for this part
+
+```{r}
+# Hu2Mo <- read_xlsx("HuMoOrthology021422_PivotToMouseClean.xlsx")
+# hs_gdata <- mutate(gdata, Key = gdata$id)
+# hs_gdata <- merge(x=hs_gdata,y=Hu2Mo, by.x=c("Key"),by.y=c("MGISym"), all.x=TRUE, all.y = FALSE)
+# 
+# hs_gdata <- mutate(hs_gdata, absScore = abs(hs_gdata$Score))
+# 
+# humpg <- rep('No', nrow(hs_gdata))
+# 
+# for (i in unique(hs_gdata[,"HuSym"])){
+#     if (is.na(i)){next}
+#     idxs <- which(hs_gdata[,"HuSym"] == i)
+#     max_idx <- which(hs_gdata$absScore[idxs] == max(hs_gdata$absScore[idxs]))[1]
+#     
+#     humpg[idxs[max_idx]] <- 'Yes'
+# }
+# 
+# hs_gdata$huMPG <- humpg
+# 
+# hs_gdata <- hs_gdata %>% filter(huMPG == "Yes")
+# hs_gdata_rnk <- hs_gdata %>% select(c("HuSym", "Score"))
+# colnames(hs_gdata_rnk) = c("#HuSym", "Score")
+# write.table(hs_gdata_rnk, sep='\t',file=paste0("Post_v_Pre",".rnk"),col.names=TRUE, quote=FALSE, row.names=FALSE)
+# 
+# hs_genelist = hs_gdata$Score
+# names(hs_genelist) = hs_gdata$HuSym
+```
+
+# Run GSEA
+
+this was run on luria instead
+
+```{r}
+# gseRes1 = EnrichAnalyzer(hs_genelist, pvalueCutoff = 0.25, method = "GSEA")
+```
+# write session info
+
+```{r}
+sessionInfo()
+writeLines(capture.output(sessionInfo()), "mageck_sessionInfo.txt")
+```

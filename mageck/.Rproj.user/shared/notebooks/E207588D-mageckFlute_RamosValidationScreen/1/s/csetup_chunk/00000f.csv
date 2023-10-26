@@ -1,0 +1,2 @@
+"0","knitr::opts_chunk$set(tidy=FALSE, cache=TRUE,"
+"0","                      dev=""png"", message=FALSE, error=FALSE, warning=TRUE)"

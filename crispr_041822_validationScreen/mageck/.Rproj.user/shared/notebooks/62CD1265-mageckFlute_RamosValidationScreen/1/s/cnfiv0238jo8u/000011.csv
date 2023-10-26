@@ -1,0 +1,3 @@
+"0","#PCAplots[[1]]"
+"0","pca.Together <- ggarrange(PCAplots[[2]],PCAplots[[3]],PCAplots[[4]], nrow=1,ncol=3)"
+"0","pca.Together"

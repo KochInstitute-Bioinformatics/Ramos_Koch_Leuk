@@ -1,0 +1,478 @@
+---
+title: "B-ALL Validation Screen"
+author: "Charlie Whittaker"
+date: "3/3/2023"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 3
+  html_notebook: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(tidy=FALSE, cache=TRUE,
+                      dev="png", message=FALSE, error=FALSE, warning=TRUE)
+```
+
+# Load libraries
+
+```{r, warning=FALSE,error=FALSE,message=FALSE}
+library(openxlsx)
+library(ggplot2)
+library(tidyverse)
+library(reprex)
+library(matrixStats)
+library(XML)
+library(ggrepel)
+library(ggVennDiagram)
+library(GGally)
+library(DESeq2)
+library(apeglm)
+library(ComplexHeatmap)
+library(dplyr)
+library(readxl)
+library(readr)
+library(tximport)
+library(edgeR)
+library(MAGeCKFlute)
+library(clusterProfiler)
+library(ggpubr)
+library(gprofiler2)
+library(VennDiagram)
+library(clusterProfiler)
+library(AnnotationDbi)
+library(org.Mm.eg.db)
+library(extrafont)
+loadfonts(device = "win")
+```
+
+# Useful functions
+
+```{r}
+vlnplot_essentials <- function(df){
+  Essential.toPlot <- merge(x=df, y=essentialGenes, by.x="id" ,by.y="MGISym", all.x=TRUE)
+  Essential.toPlot <- Essential.toPlot %>% mutate(Essential = ifelse(is.na(Essential), "No", Essential))
+  Essential.toPlot <- Essential.toPlot %>% rename(LFC = Score)
+  data <- Essential.toPlot
+  plot <- ggplot(data, aes(factor(Essential), LFC)) + geom_violin(fill='#A4A4A4') + geom_boxplot(width=.1) + ylim(-2.5, 2.5) +
+    theme_bw() + 
+    theme(plot.title = element_text(size = 8),axis.title.x = element_text(size = 8),axis.title.y = element_text(size = 8))
+  return(plot)
+}
+```
+
+# Importing data
+
+## Import from Broad PoolQ count files
+
+```{r}
+p1 <- read.delim("../fromBroad/Plate1/counts-JD_GPP3297-Ramos_20220312_1.txt")
+p2 <- read.delim("../fromBroad/Plate2/counts-JD_GPP3298-Ramos_20220312_2.txt")
+
+p2.select <- p2 %>% dplyr::select(c(-Construct.IDs,-Unlabeled.Sample.Barcodes))
+
+p1.p2 <- merge(p1,p2.select,by.x="Construct.Barcode",by.y="Construct.Barcode", all=TRUE)
+```
+
+## Import annotation
+
+```{r}
+CP1470.annot <- read.xlsx("CP1470.xlsx")
+```
+
+## Merge gene annotation with count table
+
+```{r}
+p1.p2.annot <- merge(CP1470.annot,p1.p2,by.x="Construct.Barcode",by.y="Construct.Barcode",all=TRUE)
+p1.p2.annot <- p1.p2.annot %>% dplyr::select(c(-Construct.Barcode,-Category,-Construct.IDs.y))
+p1.p2.annot <- p1.p2.annot %>% dplyr::rename(sgRNA=Construct.IDs.x,Gene=TargetGeneSymbol)
+p1.p2.annot <- p1.p2.annot %>% arrange(sgRNA)
+```
+
+## original input file
+
+```{r}
+all.counts <- p1.p2.annot
+```
+
+# Importing normalized input data, l2 transform
+
+```{r}
+all.n <- read.table("batch.normalized.txt", row.names = 1, sep = "\t", header = TRUE)
+```
+
+## Log2 normalization with plus 1 offset
+
+```{r}
+all.n <- all.n %>% dplyr::select(-Gene)
+all.n.l2 <- log((all.n+1),2)
+
+colnames(all.n.l2)<-paste(colnames(all.n.l2),"l2",sep=".")
+```
+
+# Code used to make box and PCA plots from primary screen
+
+## QC bolxplots
+
+```{r,fig.width=12,fig.height=8}
+validation.n.l2 <- all.n.l2 %>% rename_at(vars(everything()), ~str_replace_all(., ".l2", ""))
+validation.n.l2.reorder <- validation.n.l2 %>% dplyr::select(starts_with("pDNA") | 
+                                                          starts_with("Input") | 
+                                                          starts_with("ah") | 
+                                                          starts_with("am") | 
+                                                          starts_with("NoCAR") |
+                                                          starts_with("AR"))
+
+
+tt <- validation.n.l2.reorder[,c(1:23,25,27,29,31,33,35,37,39,41,43,45,24,26,28,30,32,34,36,38,40,42,44,46)]
+validation.n.l2.reorder <- tt
+```
+
+```{r,fig.width=8,fig.height=8}
+validationBoxPlot <- ggplot(stack(validation.n.l2.reorder), aes(x = ind, y = values)) + geom_boxplot() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + ggtitle("all samples log2 normalized")
+
+validationBoxPlot
+```
+
+## PCA Plots
+
+```{r,fig.height=4,fig.width=5}
+# Create an empty list to store the ggplot objects
+PCAdata <- list()
+PCAplots <- list()
+
+# Read in sample annotations
+AR.samps <- read_xlsx("AR_validation_conditions.xlsx")
+
+# PCA of all samples together
+plotTitle <- "All Validation Samples"
+select.pca <- prcomp(t(validation.n.l2.reorder))
+var <- select.pca$sdev^2
+variance <- var/sum(var)
+percentVar <- select.pca$sdev^2 / sum(select.pca$sdev^2 )
+percentVar <- round(100 * percentVar,2)
+select.pca$percentVar <- percentVar
+
+select.pca$treatment <- AR.samps$treatment
+select.pca$tissue <- AR.samps$tissue
+select.pca$tissTreat <- paste0(AR.samps$tissue,".",AR.samps$treatment)
+
+select.pca$samps <- colnames(validation.n.l2.reorder)
+
+data <- as.data.frame(select.pca$x)
+data$fill <- factor(select.pca$tissTreat)
+plot <- ggplot(data, aes(x=PC1, y=PC2)) + geom_point(aes(fill = fill),shape=21, size = 4) + xlab(paste0("PC1 - ",select.pca$percentVar[1]," % of variability")) + ylab(paste0("PC2 - ",select.pca$percentVar[2]," % of variability")) + theme(legend.text = element_text(size = 8))
+
+PCAdata[[plotTitle]] <- data
+PCAplots[[plotTitle]] <- plot
+
+# PCA of just in vitro
+
+plotTitle <- "In vitro"
+invitro.l2 <- validation.n.l2.reorder %>% dplyr::select(starts_with("pDNA") |
+                                                          starts_with("Input") |
+                                                          starts_with("ah") |
+                                                          starts_with("am") |
+                                                          starts_with("NoCAR"))
+select.pca <- prcomp(t(invitro.l2))
+var <- select.pca$sdev^2
+variance <- var/sum(var)
+percentVar <- select.pca$sdev^2 / sum(select.pca$sdev^2 )
+percentVar <- round(100 * percentVar,2)
+select.pca$percentVar <- percentVar
+
+meta_df <- AR.samps %>% dplyr::filter(tissue == "inVitro") %>% dplyr::select(treatment)
+select.pca$treatment <- meta_df$treatment
+ 
+select.pca$samps <- colnames(invitro.l2)
+
+data <- as.data.frame(select.pca$x)
+data$fill <- factor(select.pca$treatment)
+plot <- ggplot(data, aes(x=PC1, y=PC2)) + geom_point(aes(fill = fill),shape=21, size = 4) +
+  xlab(paste0("PC1 - ",select.pca$percentVar[1]," % of variability")) +
+  ylab(paste0("PC2 - ",select.pca$percentVar[2]," % of variability")) +
+  theme(legend.text = element_text(size = 8)) + ggtitle(plotTitle)
+
+PCAdata[[plotTitle]] <- data
+PCAplots[[plotTitle]] <- plot
+
+# PCA of BM
+
+plotTitle <- "BM Samples"
+invitro.l2 <- validation.n.l2.reorder %>% dplyr::select(ends_with("BM"))
+
+select.pca <- prcomp(t(invitro.l2))
+var <- select.pca$sdev^2
+variance <- var/sum(var)
+percentVar <- select.pca$sdev^2 / sum(select.pca$sdev^2 )
+percentVar <- round(100 * percentVar,2)
+select.pca$percentVar <- percentVar
+
+meta_df <- AR.samps %>% dplyr::filter(tissue == "BM") %>% dplyr::select(treatment)
+select.pca$treatment <- meta_df$treatment
+ 
+select.pca$samps <- colnames(invitro.l2)
+
+data <- as.data.frame(select.pca$x)
+data$fill <- factor(select.pca$treatment)
+plot <- ggplot(data, aes(x=PC1, y=PC2)) + geom_point(aes(fill = fill),shape=21, size = 4) +
+  xlab(paste0("PC1 - ",select.pca$percentVar[1]," % of variability")) +
+  ylab(paste0("PC2 - ",select.pca$percentVar[2]," % of variability")) +
+  theme(legend.text = element_text(size = 8)) + ggtitle(plotTitle)
+
+PCAdata[[plotTitle]] <- data
+PCAplots[[plotTitle]] <- plot
+
+# PCA of SP
+
+plotTitle <- "SP Samples"
+invitro.l2 <- validation.n.l2.reorder %>% dplyr::select(ends_with("SP"))
+
+select.pca <- prcomp(t(invitro.l2))
+var <- select.pca$sdev^2
+variance <- var/sum(var)
+percentVar <- select.pca$sdev^2 / sum(select.pca$sdev^2 )
+percentVar <- round(100 * percentVar,2)
+select.pca$percentVar <- percentVar
+
+meta_df <- AR.samps %>% dplyr::filter(tissue == "SP") %>% dplyr::select(treatment)
+select.pca$treatment <- meta_df$treatment
+ 
+select.pca$samps <- colnames(invitro.l2)
+
+data <- as.data.frame(select.pca$x)
+data$fill <- factor(select.pca$treatment)
+plot <- ggplot(data, aes(x=PC1, y=PC2)) + geom_point(aes(fill = fill),shape=21, size = 4) +
+  xlab(paste0("PC1 - ",select.pca$percentVar[1]," % of variability")) +
+  ylab(paste0("PC2 - ",select.pca$percentVar[2]," % of variability")) +
+  theme(legend.text = element_text(size = 8)) + ggtitle(plotTitle)
+
+PCAdata[[plotTitle]] <- data
+PCAplots[[plotTitle]] <- plot
+```
+
+### Create plots
+
+```{r,fig.width=18,fig.height=5}
+#PCAplots[[1]]
+pca.Together <- ggarrange(PCAplots[[2]],PCAplots[[3]],PCAplots[[4]], nrow=1,ncol=3)
+pca.Together
+```
+
+### Build a QC figure
+
+```{r,fig.width=12,fig.height=8}
+ggarrange(validationBoxPlot,pca.Together,nrow=2,ncol=1)
+```
+
+## Write normalized data
+
+```{r}
+#all.counts <- read.xlsx("stockCounts.xlsx")
+#all.counts <- all.counts %>% dplyr::select(-Gene)
+#rownames(all.counts) <- all.counts[,1]
+#all.counts <- all.counts %>% dplyr::select(-sgRNA)
+#all.ct.l2 <- merge(x=all.counts,y=all.n.l2, by=0, all=TRUE, row.names=Row.names, Row.names=NULL)
+#all.ct.l2 <- tibble::rownames_to_column(all.ct.l2, "sgRNA")
+#write.xlsx(all.ct.l2, file="all.ct.l2.xlsx", overwrite = TRUE, rowNames=TRUE)
+```
+
+## additional sample stats
+Count up numbers of guides with > 30 counts
+
+```{r}
+for(i in 1:ncol(all.counts)) {
+  nn <- colnames(all.counts[i])
+  n30 <- sum(all.counts[,i] > 30)
+  print(paste(nn,n30))
+}
+```
+
+
+## get some QC stats
+
+```{r}
+all.iqr <- as.data.frame(sapply(all.n.l2, IQR))
+all.med <- as.data.frame(sapply(all.n.l2, median))
+all.0 <- as.data.frame(colSums(all.n.l2 == 0))
+all.stats <- cbind(all.0,all.med,all.iqr)
+
+write.xlsx(all.stats, file="all.stats.xlsx", overwrite = TRUE, rowNames=TRUE)
+```
+
+# Mageck run on Linux cluster
+
+see mageck_sr.sh
+
+# Importing mageck test data and making plots
+
+## SP_cd19.10m_v_egfr.15m
+
+```{r,fig.height=8,fig.width=8}
+SP_cd19.10m_v_egfr.15m.gdata <- ReadRRA("SP_cd19.10m_v_egfr.15m.gene_summary.txt", score = c("lfc", "rra")[1])
+SP_cd19.10m_v_egfr.15m.sdata <- ReadsgRRA("SP_cd19.10m_v_egfr.15m.sgrna_summary.txt")
+
+SP_cd19.10m_v_egfr.15m.gdata$negLogFDR = -log10(SP_cd19.10m_v_egfr.15m.gdata$FDR)
+ScatterView(SP_cd19.10m_v_egfr.15m.gdata, x = "Score", y = "negLogFDR", 
+            label = "id", model = "volcano", top = 15,
+            display_cut = TRUE, max.overlaps = Inf)
+
+SP_cd19.10m_v_egfr.15m.gdata$Rank = rank(SP_cd19.10m_v_egfr.15m.gdata$Score)
+ScatterView(SP_cd19.10m_v_egfr.15m.gdata, x = "Rank", y = "Score", label = "id", 
+                 top = 10, auto_cut_y = TRUE, ylab = "Log2FC", 
+                 groups = c("top", "bottom"), max.overlaps = Inf) + 
+  ggtitle("SP_cd19.10m_v_egfr.15m") + theme(plot.title = element_text(size = 12, face = "bold"))
+
+
+ScatterView(SP_cd19.10m_v_egfr.15m.gdata, x = "Score", y = "Rank", label = "id", 
+            auto_cut_x = TRUE, groups = c("left", "right"), 
+            xlab = "Log2FC", top = 10, max.overlaps = Inf)
+```
+
+## SP_cd19.15m_v_egfr.15m
+
+```{r,fig.height=8,fig.width=8}
+SP_cd19.15m_v_egfr.15m.gdata <- ReadRRA("SP_cd19.15m_v_egfr.15m.gene_summary.txt", score = c("lfc", "rra")[1])
+SP_cd19.15m_v_egfr.15m.sdata <- ReadsgRRA("SP_cd19.15m_v_egfr.15m.sgrna_summary.txt")
+
+SP_cd19.15m_v_egfr.15m.gdata$negLogFDR = -log10(SP_cd19.15m_v_egfr.15m.gdata$FDR)
+ScatterView(SP_cd19.15m_v_egfr.15m.gdata, x = "Score", y = "negLogFDR", 
+            label = "id", model = "volcano", top = 15,
+            display_cut = TRUE, max.overlaps = Inf)
+
+SP_cd19.15m_v_egfr.15m.gdata$Rank = rank(SP_cd19.15m_v_egfr.15m.gdata$Score)
+ScatterView(SP_cd19.15m_v_egfr.15m.gdata, x = "Rank", y = "Score", label = "id", 
+                 top = 10, auto_cut_y = TRUE, ylab = "Log2FC", 
+                 groups = c("top", "bottom"), max.overlaps = Inf) + 
+  ggtitle("SP_cd19.15m_v_egfr.15m") + theme(plot.title = element_text(size = 12, face = "bold"))
+
+
+ScatterView(SP_cd19.15m_v_egfr.15m.gdata, x = "Score", y = "Rank", label = "id", 
+            auto_cut_x = TRUE, groups = c("left", "right"), 
+            xlab = "Log2FC", top = 10, max.overlaps = Inf)
+```
+
+## BM_cd19.10m_v_egfr.15m
+
+```{r,fig.height=8,fig.width=8}
+BM_cd19.10m_v_egfr.15m.gdata <- ReadRRA("BM_cd19.10m_v_egfr.15m.gene_summary.txt", score = c("lfc", "rra")[1])
+BM_cd19.10m_v_egfr.15m.sdata <- ReadsgRRA("BM_cd19.10m_v_egfr.15m.sgrna_summary.txt")
+
+BM_cd19.10m_v_egfr.15m.gdata$negLogFDR = -log10(BM_cd19.10m_v_egfr.15m.gdata$FDR)
+ScatterView(BM_cd19.10m_v_egfr.15m.gdata, x = "Score", y = "negLogFDR", 
+            label = "id", model = "volcano", top = 15,
+            display_cut = TRUE, max.overlaps = Inf)
+
+BM_cd19.10m_v_egfr.15m.gdata$Rank = rank(BM_cd19.10m_v_egfr.15m.gdata$Score)
+ScatterView(BM_cd19.10m_v_egfr.15m.gdata, x = "Rank", y = "Score", label = "id", 
+                 top = 10, auto_cut_y = TRUE, ylab = "Log2FC", 
+                 groups = c("top", "bottom"), max.overlaps = Inf) + 
+  ggtitle("BM_cd19.10m_v_egfr.15m") + theme(plot.title = element_text(size = 12, face = "bold"))
+
+
+ScatterView(BM_cd19.10m_v_egfr.15m.gdata, x = "Score", y = "Rank", label = "id", 
+            auto_cut_x = TRUE, groups = c("left", "right"), 
+            xlab = "Log2FC", top = 10, max.overlaps = Inf)
+```
+
+## BM_cd19.15m_v_egfr.15m
+
+```{r,fig.height=8,fig.width=8}
+BM_cd19.15m_v_egfr.15m.gdata <- ReadRRA("BM_cd19.15m_v_egfr.15m.gene_summary.txt", score = c("lfc", "rra")[1])
+BM_cd19.15m_v_egfr.15m.sdata <- ReadsgRRA("BM_cd19.15m_v_egfr.15m.sgrna_summary.txt")
+
+BM_cd19.15m_v_egfr.15m.gdata$negLogFDR = -log10(BM_cd19.15m_v_egfr.15m.gdata$FDR)
+ScatterView(BM_cd19.15m_v_egfr.15m.gdata, x = "Score", y = "negLogFDR", 
+            label = "id", model = "volcano", top = 15,
+            display_cut = TRUE, max.overlaps = Inf)
+
+BM_cd19.15m_v_egfr.15m.gdata$Rank = rank(BM_cd19.15m_v_egfr.15m.gdata$Score)
+ScatterView(BM_cd19.15m_v_egfr.15m.gdata, x = "Rank", y = "Score", label = "id", 
+                 top = 10, auto_cut_y = TRUE, ylab = "Log2FC", 
+                 groups = c("top", "bottom"), max.overlaps = Inf) + 
+  ggtitle("BM_cd19.15m_v_egfr.15m") + theme(plot.title = element_text(size = 12, face = "bold"))
+
+
+ScatterView(BM_cd19.15m_v_egfr.15m.gdata, x = "Score", y = "Rank", label = "id", 
+            auto_cut_x = TRUE, groups = c("left", "right"), 
+            xlab = "Log2FC", top = 10, max.overlaps = Inf)
+```
+
+## cd19_1to2_v_egfr_1to2
+
+```{r,fig.height=8,fig.width=8}
+cd19_1to2_v_egfr_1to2.gdata <- ReadRRA("cd19_1to2_v_egfr_1to2.gene_summary.txt", score = c("lfc", "rra")[1])
+cd19_1to2_v_egfr_1to2.sdata <- ReadsgRRA("cd19_1to2_v_egfr_1to2.sgrna_summary.txt")
+
+cd19_1to2_v_egfr_1to2.gdata$negLogFDR = -log10(cd19_1to2_v_egfr_1to2.gdata$FDR)
+ScatterView(cd19_1to2_v_egfr_1to2.gdata, x = "Score", y = "negLogFDR", 
+            label = "id", model = "volcano", top = 15,
+            display_cut = TRUE, max.overlaps = Inf)
+
+cd19_1to2_v_egfr_1to2.gdata$Rank = rank(cd19_1to2_v_egfr_1to2.gdata$Score)
+ScatterView(cd19_1to2_v_egfr_1to2.gdata, x = "Rank", y = "Score", label = "id", 
+                 top = 10, auto_cut_y = TRUE, ylab = "Log2FC", 
+                 groups = c("top", "bottom"), max.overlaps = Inf) + 
+  ggtitle("cd19_1to2_v_egfr_1to2") + theme(plot.title = element_text(size = 12, face = "bold"))
+
+
+ScatterView(cd19_1to2_v_egfr_1to2.gdata, x = "Score", y = "Rank", label = "id", 
+            auto_cut_x = TRUE, groups = c("left", "right"), 
+            xlab = "Log2FC", top = 10, max.overlaps = Inf)
+```
+
+## cd19_1to10_v_egfr_1to10
+
+```{r,fig.height=8,fig.width=8}
+cd19_1to10_v_egfr_1to10.gdata <- ReadRRA("cd19_1to10_v_egfr_1to10.gene_summary.txt", score = c("lfc", "rra")[1])
+cd19_1to10_v_egfr_1to10.sdata <- ReadsgRRA("cd19_1to10_v_egfr_1to10.sgrna_summary.txt")
+
+cd19_1to10_v_egfr_1to10.gdata$negLogFDR = -log10(cd19_1to10_v_egfr_1to10.gdata$FDR)
+ScatterView(cd19_1to10_v_egfr_1to10.gdata, x = "Score", y = "negLogFDR", 
+            label = "id", model = "volcano", top = 15,
+            display_cut = TRUE, max.overlaps = Inf)
+
+cd19_1to10_v_egfr_1to10.gdata$Rank = rank(cd19_1to10_v_egfr_1to10.gdata$Score)
+ScatterView(cd19_1to10_v_egfr_1to10.gdata, x = "Rank", y = "Score", label = "id", 
+                 top = 10, auto_cut_y = TRUE, ylab = "Log2FC",
+                 groups = c("top", "bottom"), max.overlaps = Inf) + 
+  ggtitle("cd19_1to10_v_egfr_1to10") + theme(plot.title = element_text(size = 12, face = "bold"))
+
+
+ScatterView(cd19_1to10_v_egfr_1to10.gdata, x = "Score", y = "Rank", label = "id", 
+            auto_cut_x = TRUE, groups = c("left", "right"), 
+            xlab = "Log2FC", top = 10, max.overlaps = Inf)
+```
+
+# Assembling mageck gene-level fold change and FDR file
+
+```{r}
+SP.10m <- SP_cd19.10m_v_egfr.15m.gdata
+colnames(SP.10m) <- c("id","SP.10m.Score","SP.10m.FDR","SP.10m.negLogFDR","SP.10m.Rank")
+SP.15m <- SP_cd19.15m_v_egfr.15m.gdata
+colnames(SP.15m) <- c("id","SP.15m.Score","SP.15m.FDR","SP.15m.negLogFDR","SP.15m.Rank")
+BM.10m <- BM_cd19.10m_v_egfr.15m.gdata
+colnames(BM.10m) <- c("id","BM.10m.Score","BM.10m.FDR","BM.10m.negLogFDR","BM.10m.Rank")
+BM.15m <- BM_cd19.15m_v_egfr.15m.gdata
+colnames(BM.15m) <- c("id","BM.15m.Score","BM.15m.FDR","BM.15m.negLogFDR","BM.15m.Rank")
+ET.1.2 <- cd19_1to2_v_egfr_1to2.gdata
+colnames(ET.1.2) <- c("id","ET.1.2.Score","ET.1.2.FDR","ET.1.2.negLogFDR","ET.1.2.Rank")
+ET.1.10 <- cd19_1to10_v_egfr_1to10.gdata
+colnames(ET.1.10) <- c("id","ET.1.10.Score","ET.1.10.FDR","ET.1.10.negLogFDR","ET.1.10.Rank")
+
+Mageck.combined <- merge(x=SP.10m, y=SP.15m, by.x=c("id"),by.y=c("id"), all=TRUE)
+Mageck.combined <- merge(x=Mageck.combined,y=BM.10m, by.x=c("id"),by.y=c("id"), all=TRUE)
+Mageck.combined <- merge(x=Mageck.combined,y=BM.15m, by.x=c("id"),by.y=c("id"), all=TRUE)
+Mageck.combined <- merge(x=Mageck.combined,y=ET.1.2, by.x=c("id"),by.y=c("id"), all=TRUE)
+Mageck.combined <- merge(x=Mageck.combined,y=ET.1.10, by.x=c("id"),by.y=c("id"), all=TRUE)
+
+write.xlsx(Mageck.combined, file="B-All_validationScreen_GeneLevel.xlsx")
+```
+
+# write session info
+
+```{r}
+sessionInfo()
+writeLines(capture.output(sessionInfo()), "B-ALL_validationScreen_sessionInfo.txt")
+```

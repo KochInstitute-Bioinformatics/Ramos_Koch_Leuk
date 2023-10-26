@@ -1,0 +1,2262 @@
+---
+title: "Keene and Susy - All samples together"
+author: "Charlie Whittaker"
+date: "5/2/2022"
+output: 
+  html_document:
+    toc: true
+    toc_depth: 2
+  html_notebook: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(tidy=FALSE, cache=TRUE,
+                      dev="png", message=FALSE, error=FALSE, warning=TRUE)
+```
+
+# Load libraries
+
+```{r, warning=FALSE,error=FALSE,message=FALSE}
+library(openxlsx)
+library(ggplot2)
+library(tidyverse)
+library(reprex)
+library(matrixStats)
+library(XML)
+library(ggrepel)
+library(DESeq2)
+library(apeglm)
+library(ComplexHeatmap)
+library(dplyr)
+library(readxl)
+library(readr)
+library(tximport)
+library(edgeR)
+library(MAGeCKFlute)
+library(clusterProfiler)
+library(ggpubr)
+library(gprofiler2)
+library(clusterProfiler)
+library(AnnotationDbi)
+library(org.Mm.eg.db)
+library(extrafont)
+loadfonts(device = "win")
+```
+
+# Count QC
+
+```{r}
+# countsummary <- read.delim("PrePost.countsummary.txt", check.names = FALSE)
+# 
+# BarView(countsummary, x = "Label", y = "GiniIndex",
+#         ylab = "Gini index", main = "Evenness of sgRNA reads")
+# 
+# countsummary$Missed = log10(countsummary$Zerocounts)
+# BarView(countsummary, x = "Label", y = "Missed", fill = "#394E80",
+#         ylab = "Log10 missed gRNAs", main = "Missed sgRNAs")
+# 
+# MapRatesView(countsummary)
+```
+
+# Running full FluteRRA pipeline
+
+```{r}
+#file1 = file.path(system.file("extdata", package = "MAGeCKFlute"),
+#                  "PostvPre.gene_summary.txt")
+## path to the sgRNA summary file (optional)
+#file2 = file.path(system.file("extdata", package = "MAGeCKFlute"),
+#                  "PostvPre.sgrna_summary.txt")
+
+#FluteRRA("PostvPre.gene_summary.txt",incorporateDepmap = FALSE, keytype = "Symbol", proj="PostVPre", organism="mmu", outdir = "./")
+#FluteRRA("PostvPre.gene_summary.txt", "PostvPre.sgrna_summary.txt"", proj="PostVPre_plus_sgRNA", organism="mmu", outdir = "./")
+```
+
+# Import count tables
+
+```{r}
+all.counts <- read.xlsx("stockCounts.xlsx")
+```
+
+# Yunpeng's Processing
+
+The following is text from the paper:
+
+"Sample quality control was performed by counting the number of gRNA sequences that show at least 30 reads in each sample. Samples with more than 30% of gRNA sequences that were filtered out after the above procedure were excluded from further analyses. 
+
+Guide RNA-level read counts were scaled by total read count for each sample and logarithm-transformed. 
+
+Gene-level enrichment and depletion scores were computed by averaging log-normalized read counts across all gRNA sequences against each gene. 
+
+[[Six different pooled libraries were aggregated targeting a total of 21,958 unique murine genes with a total of 88,793 sgRNAs (4 per gene plus nontargeting and intergenic-cutting controls).]] 
+
+Input samples were used as a baseline for computing scores. Specifically, every gene was first assigned an ‘essentiality score’ computed as the difference (i.e. log-fold change) between the average gene-level counts for the gene across replicates and that in the input sample. 
+
+The CAR-T therapy enrichment/depletion score for a given gene is computed as the difference between the essentiality scores of that gene in anti-mCD19 CAR-T cell treated samples and in anti-hEGFRvIII CAR-T cell treated samples. 
+
+For sample groups that have at least 2 samples retained after quality control, Student’s t-tests were performed to obtain p-values for assessing significance of difference between the scores in the treatment group and the control group."
+
+## QC Method
+
+```{r}
+forQC <- all.counts %>% dplyr::select(-c(Gene,sgRNA))
+row.count <- nrow(forQC)
+sub30 <- as.data.frame(colSums(forQC < 30))
+sub30.percent <- as.data.frame((colSums(forQC < 30)/row.count)*100)
+
+# List bad samples
+row.names(sub30.percent %>% filter((colSums(forQC < 30)/row.count)*100 > 30))
+```
+
+## Yunpeng's Normalization
+
+```{r}
+forNorm <- all.counts %>% dplyr::select(-c(Gene))
+rownames(forNorm) <- forNorm[,1]
+forNorm <- forNorm %>% dplyr::select(-c(sgRNA))
+
+dat2 <- apply(forNorm,2,function(x){x/(sum(x)/1000000)})
+dat2 <- log((dat2+1),2)
+```
+
+## Grouping samples and creating means
+
+```{r}
+dat3 <- all.counts %>% dplyr::select(c("sgRNA", "Gene"))
+rownames(dat3) <- dat3[,1]
+
+dat2.df <- as.data.frame(dat2)
+dat2.df <- dat2.df %>% mutate(ahEGFRv3_1to10.av = rowMeans(dplyr::select(., starts_with("ahEGFRv3_1to10"))))
+dat2.df <- dat2.df %>% mutate(ahEGFRv3_1to2.av = rowMeans(dplyr::select(., starts_with("ahEGFRv3_1to2"))))
+dat2.df <- dat2.df %>% mutate(amCD19_1to10.av = rowMeans(dplyr::select(., starts_with("amCD19_1to10"))))
+dat2.df <- dat2.df %>% mutate(amCD19_1to2.av = rowMeans(dplyr::select(., starts_with("amCD19_1to2"))))
+dat2.df <- dat2.df %>% mutate(NoCAR_T.av = rowMeans(dplyr::select(., starts_with("NoCAR_T"))))
+dat2.df <- dat2.df %>% mutate(amCD19_1to2.av = rowMeans(dplyr::select(., starts_with("amCD19_1to2"))))
+dat2.df <- dat2.df %>% mutate(Input1_DOI.av = rowMeans(dplyr::select(., starts_with("Input1_DOI"))))
+dat2.df <- dat2.df %>% mutate(Input2_ACT.av = rowMeans(dplyr::select(., starts_with("Input2_ACT"))))
+dat2.df <- dat2.df %>% mutate(BM_cd19.15m.av = rowMeans(dplyr::select(., AR2480_BM,AR2481_BM,AR2482_BM,AR2483_BM)))
+dat2.df <- dat2.df %>% mutate(BM_egfr.15m.av = rowMeans(dplyr::select(., AR2466_BM,AR2467_BM,AR2468_BM,AR2469_BM)))
+dat2.df <- dat2.df %>% mutate(BM_cd19.10m.av = rowMeans(dplyr::select(., AR2473_BM,AR2474_BM,AR2475_BM,AR2476_BM)))
+dat2.df <- dat2.df %>% mutate(SP_cd19.15m.av = rowMeans(dplyr::select(., AR2480_SP,AR2481_SP,AR2482_SP,AR2483_SP)))
+dat2.df <- dat2.df %>% mutate(SP_egfr.15m.av = rowMeans(dplyr::select(., AR2466_SP,AR2467_SP,AR2468_SP,AR2469_SP)))
+# AR2475_SP excluded due to the 30% less than 30 QC rule
+dat2.df <- dat2.df %>% mutate(SP_cd19.10m.av = rowMeans(dplyr::select(., AR2473_SP,AR2474_SP,AR2476_SP)))
+dat2.df <- dat2.df %>% dplyr::select(ends_with(".av"))
+Av.df <- merge(dat3,dat2.df, by=0, all=TRUE)
+```
+
+## Preparing guide-level fold changes
+
+```{r}
+#In vitro
+Av.df <- Av.df %>% mutate(cd19_1to2_v_egfr_1to2.fc = ((amCD19_1to2.av-Input1_DOI.av)-(ahEGFRv3_1to2.av-Input1_DOI.av)))
+Av.df <- Av.df %>% mutate(cd19_1to10_v_egfr_1to10.fc = ((amCD19_1to10.av-Input1_DOI.av)-(ahEGFRv3_1to10.av-Input1_DOI.av)))
+#In vivo
+Av.df <- Av.df %>% mutate(BM_cd19.15m_v_egfr.15m.fc = ((BM_cd19.15m.av-Input1_DOI.av)-(BM_egfr.15m.av-Input1_DOI.av)))
+Av.df <- Av.df %>% mutate(BM_cd19.10m_v_egfr.15m.fc = ((BM_cd19.10m.av-Input1_DOI.av)-(BM_egfr.15m.av-Input1_DOI.av)))
+Av.df <- Av.df %>% mutate(SP_cd19.15m_v_egfr.15m.fc = ((BM_cd19.15m.av-Input1_DOI.av)-(BM_egfr.15m.av-Input1_DOI.av)))
+Av.df <- Av.df %>% mutate(SP_cd19.10m_v_egfr.15m.fc = ((BM_cd19.10m.av-Input1_DOI.av)-(BM_egfr.15m.av-Input1_DOI.av)))
+```
+
+## Preparing gene-level fold changes
+
+```{r}
+cd19_1to2_v_egfr_1to2.fc.Gene <- Av.df %>% group_by(Gene) %>% summarize(cd19_1to2_v_egfr_1to2.fc.Gene = mean(cd19_1to2_v_egfr_1to2.fc, na.rm = TRUE))
+cd19_1to10_v_egfr_1to10.fc.Gene <- Av.df %>% group_by(Gene) %>% summarize(cd19_1to10_v_egfr_1to10.fc.Gene = mean(cd19_1to10_v_egfr_1to10.fc, na.rm = TRUE))
+BM_cd19.15m_v_egfr.15m.fc.Gene <- Av.df %>% group_by(Gene) %>% summarize(BM_cd19.15m_v_egfr.15m.fc.Gene = mean(BM_cd19.15m_v_egfr.15m.fc, na.rm = TRUE))
+BM_cd19.10m_v_egfr.15m.fc.Gene <- Av.df %>% group_by(Gene) %>% summarize(BM_cd19.10m_v_egfr.15m.fc.Gene = mean(BM_cd19.10m_v_egfr.15m.fc, na.rm = TRUE))
+SP_cd19.15m_v_egfr.15m.fc.Gene <- Av.df %>% group_by(Gene) %>% summarize(SP_cd19.15m_v_egfr.15m.fc.Gene = mean(SP_cd19.15m_v_egfr.15m.fc, na.rm = TRUE))
+SP_cd19.10m_v_egfr.15m.fc.Gene <- Av.df %>% group_by(Gene) %>% summarize(SP_cd19.10m_v_egfr.15m.fc.Gene = mean(SP_cd19.10m_v_egfr.15m.fc, na.rm = TRUE))
+```
+
+## Assembling gene-level fold changes
+
+```{r}
+GeneMeans <- cbind(cd19_1to2_v_egfr_1to2.fc.Gene,cd19_1to10_v_egfr_1to10.fc.Gene,BM_cd19.15m_v_egfr.15m.fc.Gene,BM_cd19.10m_v_egfr.15m.fc.Gene,
+                   SP_cd19.15m_v_egfr.15m.fc.Gene,SP_cd19.10m_v_egfr.15m.fc.Gene)
+rownames(GeneMeans) <- GeneMeans[,1]
+GeneMeans <- GeneMeans %>% dplyr::select(-Gene)
+GeneMeans <- tibble::rownames_to_column(GeneMeans, "Gene")
+#write.xlsx(GeneMeans, file="LFC_GeneMeans.xlsx")
+```
+
+## Make Plots
+
+```{r}
+Fccolumns <- colnames(GeneMeans[-1])
+
+for (i in Fccolumns){
+  sorted_df <- GeneMeans %>% dplyr::select(all_of(i),Gene) %>% arrange(get(i))
+  sorted_df$rank <- c(1:nrow(sorted_df))
+  colnames(sorted_df) <- c("LFC","gene","rank")
+  sorted_df_top <- sorted_df[sorted_df$rank <= 10 | sorted_df$rank >= (nrow(sorted_df)-9),]
+  sorted_df$color <- "others"
+  sorted_df$color[match(c("Jak1","Jak2","Stat1","Ifngr1","H2-T23","Cd19"),sorted_df$gene)] <- "hits"
+  df_to_highlight <- sorted_df[match(c('Jak2','Stat1','Ifngr1','H2-T23','Cd19'),sorted_df$gene),]
+  assign(paste0(i,".plot"),ggplot(sorted_df, aes(x=rank, y=LFC)) + geom_point(aes(size=abs(LFC), fill = color),shape=21, color='grey50') +
+  theme_bw() + geom_point(data = df_to_highlight, aes(size=abs(LFC), fill = color),shape=21, color='grey50') + geom_label_repel(data=df_to_highlight, aes(label = gene)) +
+  theme(panel.border = element_blank(), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.line = element_line(colour = "black")) +
+  theme(axis.text=element_text(size=20)) + ggtitle(i) +
+  scale_y_continuous(breaks=seq(-6,6,2), limits=c(-7,7)))
+}
+```
+
+```{r}
+BM_cd19.10m_v_egfr.15m.fc.Gene.plot
+BM_cd19.15m_v_egfr.15m.fc.Gene.plot
+
+SP_cd19.10m_v_egfr.15m.fc.Gene.plot
+SP_cd19.15m_v_egfr.15m.fc.Gene.plot
+
+cd19_1to10_v_egfr_1to10.fc.Gene.plot
+cd19_1to2_v_egfr_1to2.fc.Gene.plot 
+```
+
+```{r}
+sorted_df <- GeneMeans %>% dplyr::select(cd19_1to2_v_egfr_1to2.fc.Gene,Gene) %>% arrange(cd19_1to2_v_egfr_1to2.fc.Gene)
+sorted_df$rank <- c(1:nrow(sorted_df))
+colnames(sorted_df) <- c("LFC","gene","rank")
+sorted_df_top <- sorted_df[sorted_df$rank <= 10 | sorted_df$rank >= (nrow(sorted_df)-9),]
+sorted_df$color <- "others"
+sorted_df$color[match(c('Jak2','Stat1','Ifngr1','H2-T23','Cd19'),sorted_df$gene)] <- "hits"
+df_to_highlight <- sorted_df[match(c('Jak2','Stat1','Ifngr1','H2-T23','Cd19'),sorted_df$gene),]
+
+p1 <- ggplot(sorted_df, aes(x=rank, y=LFC)) +
+  geom_point(aes(size=abs(LFC), fill = color),shape=21, color='grey50') +
+  theme_bw() + 
+  geom_point(data = df_to_highlight, aes(size=abs(LFC), fill = color),shape=21, color='grey50') +
+  theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(), axis.line = element_line(colour = "black")) +
+  theme(axis.text=element_text(size=20)) + ggtitle("cd19_1to2_v_egfr_1to2") +
+  scale_y_continuous(breaks=seq(-6,6,2), limits=c(-7,7)) 
+
+
+sorted_df <- GeneMeans %>% dplyr::select(cd19_1to10_v_egfr_1to10.fc.Gene,Gene) %>% arrange(cd19_1to10_v_egfr_1to10.fc.Gene)
+sorted_df$rank <- c(1:nrow(sorted_df))
+colnames(sorted_df) <- c("LFC","gene","rank")
+sorted_df_top <- sorted_df[sorted_df$rank <= 10 | sorted_df$rank >= (nrow(sorted_df)-9),]
+sorted_df$color <- "others"
+sorted_df$color[match(c('Jak2','Stat1','Ifngr1','H2-T23','Cd19'),sorted_df$gene)] <- "hits"
+df_to_highlight <- sorted_df[match(c('Jak2','Stat1','Ifngr1','H2-T23','Cd19'),sorted_df$gene),]
+
+p2 <- ggplot(sorted_df, aes(x=rank, y=LFC)) +
+  geom_point(aes(size=abs(LFC), fill = color),shape=21, color='grey50') +
+  theme_bw() + 
+  geom_point(data = df_to_highlight, aes(size=abs(LFC), fill = color),shape=21, color='grey50') +
+  theme(panel.border = element_blank(), panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(), axis.line = element_line(colour = "black")) +
+  theme(axis.text=element_text(size=20)) + ggtitle("cd19_1to10_v_egfr_1to10") +
+  scale_y_continuous(breaks=seq(-6,6,2), limits=c(-7,7)) 
+
+
+```
+
+```{r}
+p1
+p2
+```
+
+# Importing normalized input data for KA experiments, l2 transform
+
+```{r}
+all.n <- read.table("batch.normalized.txt", row.names = 1, sep = "\t", header = TRUE)
+```
+
+## Log2 normalization with plus 1 offset
+
+```{r}
+all.n <- all.n %>% dplyr::select(-Gene)
+all.n.l2 <- log((all.n+1),2)
+
+colnames(all.n.l2)<-paste(colnames(all.n.l2),"l2",sep=".")
+```
+
+## PCA plots
+
+```{r}
+#exclude.pattern <- c('pDNA','KA')
+cols <- grep('^AR', colnames(all.n.l2))
+AR.pca <- prcomp(t(all.n.l2[cols]))
+
+var <- AR.pca$sdev^2
+variance <- var/sum(var)
+percentVar <- AR.pca$sdev^2 / sum(AR.pca$sdev^2 )
+percentVar <- round(100 * percentVar,2)
+AR.pca$percentVar <- percentVar
+AR.samps <- read_xlsx("AR_conditions.xlsx")
+AR.pca$treatment <-AR.samps$treatment
+AR.pca$tissue <-AR.samps$tissue
+
+arPCAplot <- ggplot(as.data.frame(AR.pca$x), aes(x=PC1, y=PC2)) + 
+  geom_point(aes(fill = factor(AR.pca$treatment)),shape=21, size = 5) + 
+  xlab("PC1 - 16.38 % of variability") + 
+  ylab("PC1 - 13.53 % of variability")
+
+arPCAplot
+
+ar.pca.data <- as.data.frame(AR.pca$x)
+ar.pca.data$percentVar <- AR.pca$percentVar
+ar.pca.data$treatment <- AR.pca$treatment
+write.xlsx(ar.pca.data, file="AR.pca.xlsx", row.names=TRUE)
+
+cols <- grep("^ah|^am", colnames(all.n.l2))
+IV.pca <- prcomp(t(all.n.l2[cols]))
+
+var <- IV.pca$sdev^2
+variance <- var/sum(var)
+percentVar <- IV.pca$sdev^2 / sum(IV.pca$sdev^2 )
+percentVar <- round(100 * percentVar,2)
+IV.pca$percentVar <- percentVar
+IV.samps <- read_xlsx("IV_conditions.xlsx")
+IV.pca$treatment <- IV.samps$treatment
+
+ivPCAplot <- ggplot(as.data.frame(IV.pca$x), aes(x=PC1, y=PC2)) + 
+  geom_point(aes(fill = factor(IV.pca$treatment)),shape=21, size = 5) + 
+  xlab("PC1 - 64.39 % of variability") + 
+  ylab("PC1 - 13.82 % of variability")
+
+ivPCAplot
+```
+
+```{r}
+cols <- grep('^AR', colnames(all.n.l2))
+cols2 <- cols[-c(13,14,19,20)]
+ARsubset.pca <- prcomp(t(all.n.l2[cols2]))
+
+var <- ARsubset.pca$sdev^2
+variance <- var/sum(var)
+percentVar <- ARsubset.pca$sdev^2 / sum(ARsubset.pca$sdev^2 )
+percentVar <- round(100 * percentVar,2)
+ARsubset.pca$percentVar <- percentVar
+ARsubset.samps <- read_xlsx("AR_conditions2.xlsx")
+ARsubset.pca$treatment <-ARsubset.samps$treatment
+ARsubset.pca$tissue <-ARsubset.samps$tissue
+ARsubset.pca$tiss.treat <- paste0(ARsubset.samps$tissue,".",ARsubset.samps$treatment)
+
+arPCAplot <- ggplot(as.data.frame(ARsubset.pca$x), aes(x=PC1, y=PC2)) + 
+  geom_point(aes(fill = factor(ARsubset.pca$tiss.treat)),shape=21, size = 5) + 
+  xlab("PC1 - 11.73 % of variability") + 
+  ylab("PC1 - 10.03 % of variability")
+
+arPCAplot
+
+pdf('PCA_BM_and_SP_set_guideLevel.pdf',width=10, height=8)
+print(arPCAplot)
+dev.off()
+```
+
+## PCA for revision - 9/4/22 request
+
+Guide-level plot for requested samples
+
+```{r}
+cols <- grep('^AR', colnames(all.n.l2))
+cols3 <- cols[c(2,4,6,8,10,12,14,16)]
+testAR <- all.n.l2[cols3]
+ARsubset3.pca <- prcomp(t(all.n.l2[cols3]))
+
+var <- ARsubset3.pca$sdev^2
+variance <- var/sum(var)
+percentVar <- ARsubset3.pca$sdev^2 / sum(ARsubset3.pca$sdev^2 )
+percentVar <- round(100 * percentVar,2)
+ARsubset3.pca$percentVar <- percentVar
+ARsubset3.samps <- read_xlsx("AR_conditions3.xlsx")
+ARsubset3.pca$treatment <-ARsubset3.samps$treatment
+ARsubset3.pca$tissue <-ARsubset3.samps$tissue
+
+write.xlsx(as.data.frame(ARsubset3.pca$x), file="SP_subset_PCA.xlsx", rowNames=TRUE)
+
+arPCAplot3 <- ggplot(as.data.frame(ARsubset3.pca$x), aes(x=PC1, y=PC2)) + 
+  geom_point(aes(fill = factor(ARsubset3.pca$treatment)),shape=21, size = 5) + 
+  xlab("PC1 - 53.11 % of variability") + 
+  ylab("PC1 - 16.88 % of variability")
+
+arPCAplot3
+
+pdf('PCA_SPset_guideLevel.pdf',width=10, height=8)
+print(arPCAplot3)
+dev.off()
+```
+
+## gene-level PCA for revision - 9/6/22 request
+
+Gene-level plots for requested samples
+
+```{r}
+gene.l2 <- read.xlsx("geneLevel_l2n_for_PCA.xlsx")
+#gene.l2 <- gene.l2 %>% dplyr::filter(is.na(ControlGroup))
+cols <- grep('^Avg.AR', colnames(gene.l2))
+cols3 <- cols[c(2,4,6,8,10,12,14,16)]
+#geneAR <- gene.l2[cols]
+ARgene.pca <- prcomp(t(gene.l2[cols3]))
+
+var <- ARgene.pca$sdev^2
+variance <- var/sum(var)
+percentVar <- ARgene.pca$sdev^2 / sum(ARgene.pca$sdev^2 )
+percentVar <- round(100 * percentVar,2)
+ARgene.pca$percentVar <- percentVar
+ARgene.pca.samps <- read_xlsx("AR_conditions.xlsx")
+ARgeneSubset.pca.samps <- read_xlsx("AR_conditions3.xlsx")
+ARgene.pca$treatment <- ARgeneSubset.pca.samps$treatment
+ARgene.pca$tissue <-ARgeneSubset.pca.samps$tissue
+
+#write.xlsx(as.data.frame(ARgene.pca$x), file="ARgene_PCA.xlsx", rowNames=TRUE)
+
+arPCAplot4 <- ggplot(as.data.frame(ARgene.pca$x), aes(x=PC1, y=PC2)) + 
+  geom_point(aes(fill = factor(ARgene.pca$treatment)),shape=21, size = 5) + 
+  xlab(paste0("PC1 - ",ARgene.pca$percentVar[1]," % of variability")) + 
+  ylab(paste0("PC2 - ",ARgene.pca$percentVar[2]," % of variability"))
+
+arPCAplot4
+
+pdf('PCA_geneLevel.pdf',width=10, height=8)
+print(arPCAplot4)
+dev.off()
+```
+
+## Write normalized data
+
+```{r}
+all.counts <- read.xlsx("stockCounts.xlsx")
+all.counts <- all.counts %>% dplyr::select(-Gene)
+rownames(all.counts) <- all.counts[,1]
+all.counts <- all.counts %>% dplyr::select(-sgRNA)
+all.ct.l2 <- merge(x=all.counts,y=all.n.l2, by=0, all=TRUE, row.names=Row.names, Row.names=NULL)
+#all.ct.l2 <- tibble::rownames_to_column(all.ct.l2, "sgRNA")
+#write.xlsx(all.ct.l2, file="all.ct.l2.xlsx", overwrite = TRUE, rowNames=TRUE)
+```
+
+## additional sample stats
+Count up numbers of guides with > 30 counts
+
+
+```{r}
+for(i in 1:ncol(all.counts)) {
+  nn <- colnames(all.counts[i])
+  n30 <- sum(all.counts[,i] > 30)
+  print(paste(nn,n30))
+}
+```
+
+# QC bolxplots
+
+```{r,fig.width=12,fig.height=8}
+ggplot(stack(all.n.l2), aes(x = ind, y = values)) + geom_boxplot() +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) + ggtitle("all samples log2 normalized") 
+```
+
+## get some QC stats
+
+```{r}
+all.iqr <- as.data.frame(sapply(all.n.l2, IQR))
+all.med <- as.data.frame(sapply(all.n.l2, median))
+all.0 <- as.data.frame(colSums(all.n.l2 == 0))
+all.stats <- cbind(all.0,all.med,all.iqr)
+
+write.xlsx(all.stats, file="all.stats.xlsx", overwrite = TRUE, rowNames=TRUE)
+```
+
+## Calculate group averages
+
+not applicable for this experiment
+
+```{r}
+# p12.Means <- p12.all.l2 %>% mutate(input.mean = select(., contains("input")) %>% rowMeans(na.rm = TRUE))
+# p12.Means <- p12.Means %>% mutate(egfr.mean = select(., contains("egfr")) %>% rowMeans(na.rm = TRUE))
+# p12.Means <- p12.Means %>% mutate(cd19.mean = select(., contains("cd19")) %>% rowMeans(na.rm = TRUE))
+# p12.Means <- p12.Means %>% select(contains("mean"))
+# write.xlsx(p12.Means, file="p12.Means.xlsx", overwrite = TRUE, rowNames=TRUE)
+```
+
+# Importing mageck test data and making plots
+
+## MPM_21_v_RPMI_21
+
+```{r,fig.height=4,fig.width=8}
+MPM_21_v_RPMI_21.gdata <- ReadRRA("MPM_21_v_RPMI_21.gene_summary.txt", score = c("lfc", "rra")[1])
+MPM_21_v_RPMI_21.sdata <- ReadsgRRA("MPM_21_v_RPMI_21.sgrna_summary.txt")
+
+MPM_21_v_RPMI_21.gdata$negLogFDR = -log10(MPM_21_v_RPMI_21.gdata$FDR)
+ScatterView(MPM_21_v_RPMI_21.gdata, x = "Score", y = "negLogFDR", 
+            label = "id", model = "volcano", top = 8,
+            display_cut = TRUE, max.overlaps = Inf)
+
+MPM_21_v_RPMI_21.gdata$Rank = rank(MPM_21_v_RPMI_21.gdata$Score)
+ScatterView(MPM_21_v_RPMI_21.gdata, x = "Rank", y = "Score", label = "id", 
+                 top = 6, auto_cut_y = TRUE, ylab = "Log2FC", 
+                 groups = c("top", "bottom"), max.overlaps = Inf)
+
+ScatterView(MPM_21_v_RPMI_21.gdata, x = "Score", y = "Rank", label = "id", 
+            auto_cut_x = TRUE, groups = c("left", "right"), 
+            xlab = "Log2FC", top = 6, max.overlaps = Inf)
+```
+
+## MPM_5_v_RPMI_5
+
+```{r,fig.height=4,fig.width=8}
+MPM_5_v_RPMI_5.gdata <- ReadRRA("MPM_5_v_RPMI_5.gene_summary.txt", score = c("lfc", "rra")[1])
+MPM_5_v_RPMI_5.sdata <- ReadsgRRA("MPM_5_v_RPMI_5.sgrna_summary.txt")
+
+MPM_5_v_RPMI_5.gdata$negLogFDR = -log10(MPM_5_v_RPMI_5.gdata$FDR)
+ScatterView(MPM_5_v_RPMI_5.gdata, x = "Score", y = "negLogFDR", 
+            label = "id", model = "volcano", top = 8,
+            display_cut = TRUE, max.overlaps = Inf)
+
+MPM_5_v_RPMI_5.gdata$Rank = rank(MPM_5_v_RPMI_5.gdata$Score)
+ScatterView(MPM_5_v_RPMI_5.gdata, x = "Rank", y = "Score", label = "id", 
+                 top = 6, auto_cut_y = TRUE, ylab = "Log2FC", 
+                 groups = c("top", "bottom"), max.overlaps = Inf)
+
+ScatterView(MPM_5_v_RPMI_5.gdata, x = "Score", y = "Rank", label = "id", 
+            auto_cut_x = TRUE, groups = c("left", "right"), 
+            xlab = "Log2FC", top = 6, max.overlaps = Inf)
+```
+
+## RPMI_5_v_RPMI_21
+
+```{r,fig.height=4,fig.width=8}
+RPMI_5_v_RPMI_21.gdata <- ReadRRA("RPMI_5_v_RPMI_21.gene_summary.txt", score = c("lfc", "rra")[1])
+RPMI_5_v_RPMI_21.sdata <- ReadsgRRA("RPMI_5_v_RPMI_21.sgrna_summary.txt")
+
+RPMI_5_v_RPMI_21.gdata$negLogFDR = -log10(RPMI_5_v_RPMI_21.gdata$FDR)
+ScatterView(RPMI_5_v_RPMI_21.gdata, x = "Score", y = "negLogFDR", 
+            label = "id", model = "volcano", top = 8,
+            display_cut = TRUE, max.overlaps = Inf)
+
+RPMI_5_v_RPMI_21.gdata$Rank = rank(RPMI_5_v_RPMI_21.gdata$Score)
+ScatterView(RPMI_5_v_RPMI_21.gdata, x = "Rank", y = "Score", label = "id", 
+                 top = 6, auto_cut_y = TRUE, ylab = "Log2FC", 
+                 groups = c("top", "bottom"), max.overlaps = Inf)
+
+ScatterView(RPMI_5_v_RPMI_21.gdata, x = "Score", y = "Rank", label = "id", 
+            auto_cut_x = TRUE, groups = c("left", "right"), 
+            xlab = "Log2FC", top = 6, max.overlaps = Inf)
+```
+
+## MPM_5_v_MPM_21
+
+```{r,fig.height=4,fig.width=8}
+MPM_5_v_MPM_21.gdata <- ReadRRA("MPM_5_v_MPM_21.gene_summary.txt", score = c("lfc", "rra")[1])
+MPM_5_v_MPM_21.sdata <- ReadsgRRA("MPM_5_v_MPM_21.sgrna_summary.txt")
+
+MPM_5_v_MPM_21.gdata$negLogFDR = -log10(MPM_5_v_MPM_21.gdata$FDR)
+ScatterView(MPM_5_v_MPM_21.gdata, x = "Score", y = "negLogFDR", 
+            label = "id", model = "volcano", top = 8,
+            display_cut = TRUE, max.overlaps = Inf)
+
+MPM_5_v_MPM_21.gdata$Rank = rank(MPM_5_v_MPM_21.gdata$Score)
+ScatterView(MPM_5_v_MPM_21.gdata, x = "Rank", y = "Score", label = "id", 
+                 top = 6, auto_cut_y = TRUE, ylab = "Log2FC", 
+                 groups = c("top", "bottom"), max.overlaps = Inf)
+
+ScatterView(MPM_5_v_MPM_21.gdata, x = "Score", y = "Rank", label = "id", 
+            auto_cut_x = TRUE, groups = c("left", "right"), 
+            xlab = "Log2FC", top = 6, max.overlaps = Inf)
+```
+
+## SP_cd19.10m_v_egfr.15m
+
+```{r,fig.height=8,fig.width=8}
+SP_cd19.10m_v_egfr.15m.gdata <- ReadRRA("SP_cd19.10m_v_egfr.15m.gene_summary.txt", score = c("lfc", "rra")[1])
+SP_cd19.10m_v_egfr.15m.sdata <- ReadsgRRA("SP_cd19.10m_v_egfr.15m.sgrna_summary.txt")
+
+SP_cd19.10m_v_egfr.15m.gdata$negLogFDR = -log10(SP_cd19.10m_v_egfr.15m.gdata$FDR)
+ScatterView(SP_cd19.10m_v_egfr.15m.gdata, x = "Score", y = "negLogFDR", 
+            label = "id", model = "volcano", top = 15,
+            display_cut = TRUE, max.overlaps = Inf)
+
+SP_cd19.10m_v_egfr.15m.gdata$Rank = rank(SP_cd19.10m_v_egfr.15m.gdata$Score)
+ScatterView(SP_cd19.10m_v_egfr.15m.gdata, x = "Rank", y = "Score", label = "id", 
+                 top = 10, auto_cut_y = TRUE, ylab = "Log2FC", 
+                 groups = c("top", "bottom"), max.overlaps = Inf) + 
+  ggtitle("SP_cd19.10m_v_egfr.15m") + theme(plot.title = element_text(size = 12, face = "bold"))
+
+
+ScatterView(SP_cd19.10m_v_egfr.15m.gdata, x = "Score", y = "Rank", label = "id", 
+            auto_cut_x = TRUE, groups = c("left", "right"), 
+            xlab = "Log2FC", top = 10, max.overlaps = Inf)
+```
+
+## SP_cd19.15m_v_egfr.15m
+
+```{r,fig.height=8,fig.width=8}
+SP_cd19.15m_v_egfr.15m.gdata <- ReadRRA("SP_cd19.15m_v_egfr.15m.gene_summary.txt", score = c("lfc", "rra")[1])
+SP_cd19.15m_v_egfr.15m.sdata <- ReadsgRRA("SP_cd19.15m_v_egfr.15m.sgrna_summary.txt")
+
+SP_cd19.15m_v_egfr.15m.gdata$negLogFDR = -log10(SP_cd19.15m_v_egfr.15m.gdata$FDR)
+ScatterView(SP_cd19.15m_v_egfr.15m.gdata, x = "Score", y = "negLogFDR", 
+            label = "id", model = "volcano", top = 15,
+            display_cut = TRUE, max.overlaps = Inf)
+
+SP_cd19.15m_v_egfr.15m.gdata$Rank = rank(SP_cd19.15m_v_egfr.15m.gdata$Score)
+ScatterView(SP_cd19.15m_v_egfr.15m.gdata, x = "Rank", y = "Score", label = "id", 
+                 top = 10, auto_cut_y = TRUE, ylab = "Log2FC", 
+                 groups = c("top", "bottom"), max.overlaps = Inf) + 
+  ggtitle("SP_cd19.15m_v_egfr.15m") + theme(plot.title = element_text(size = 12, face = "bold"))
+
+
+ScatterView(SP_cd19.15m_v_egfr.15m.gdata, x = "Score", y = "Rank", label = "id", 
+            auto_cut_x = TRUE, groups = c("left", "right"), 
+            xlab = "Log2FC", top = 10, max.overlaps = Inf)
+```
+
+## BM_cd19.10m_v_egfr.15m
+
+```{r,fig.height=8,fig.width=8}
+BM_cd19.10m_v_egfr.15m.gdata <- ReadRRA("BM_cd19.10m_v_egfr.15m.gene_summary.txt", score = c("lfc", "rra")[1])
+BM_cd19.10m_v_egfr.15m.sdata <- ReadsgRRA("BM_cd19.10m_v_egfr.15m.sgrna_summary.txt")
+
+BM_cd19.10m_v_egfr.15m.gdata$negLogFDR = -log10(BM_cd19.10m_v_egfr.15m.gdata$FDR)
+ScatterView(BM_cd19.10m_v_egfr.15m.gdata, x = "Score", y = "negLogFDR", 
+            label = "id", model = "volcano", top = 15,
+            display_cut = TRUE, max.overlaps = Inf)
+
+BM_cd19.10m_v_egfr.15m.gdata$Rank = rank(BM_cd19.10m_v_egfr.15m.gdata$Score)
+ScatterView(BM_cd19.10m_v_egfr.15m.gdata, x = "Rank", y = "Score", label = "id", 
+                 top = 10, auto_cut_y = TRUE, ylab = "Log2FC", 
+                 groups = c("top", "bottom"), max.overlaps = Inf) + 
+  ggtitle("BM_cd19.10m_v_egfr.15m") + theme(plot.title = element_text(size = 12, face = "bold"))
+
+
+ScatterView(BM_cd19.10m_v_egfr.15m.gdata, x = "Score", y = "Rank", label = "id", 
+            auto_cut_x = TRUE, groups = c("left", "right"), 
+            xlab = "Log2FC", top = 10, max.overlaps = Inf)
+```
+
+## BM_cd19.15m_v_egfr.15m
+
+```{r,fig.height=8,fig.width=8}
+BM_cd19.15m_v_egfr.15m.gdata <- ReadRRA("BM_cd19.15m_v_egfr.15m.gene_summary.txt", score = c("lfc", "rra")[1])
+BM_cd19.15m_v_egfr.15m.sdata <- ReadsgRRA("BM_cd19.15m_v_egfr.15m.sgrna_summary.txt")
+
+BM_cd19.15m_v_egfr.15m.gdata$negLogFDR = -log10(BM_cd19.15m_v_egfr.15m.gdata$FDR)
+ScatterView(BM_cd19.15m_v_egfr.15m.gdata, x = "Score", y = "negLogFDR", 
+            label = "id", model = "volcano", top = 15,
+            display_cut = TRUE, max.overlaps = Inf)
+
+BM_cd19.15m_v_egfr.15m.gdata$Rank = rank(BM_cd19.15m_v_egfr.15m.gdata$Score)
+ScatterView(BM_cd19.15m_v_egfr.15m.gdata, x = "Rank", y = "Score", label = "id", 
+                 top = 10, auto_cut_y = TRUE, ylab = "Log2FC", 
+                 groups = c("top", "bottom"), max.overlaps = Inf) + 
+  ggtitle("BM_cd19.15m_v_egfr.15m") + theme(plot.title = element_text(size = 12, face = "bold"))
+
+
+ScatterView(BM_cd19.15m_v_egfr.15m.gdata, x = "Score", y = "Rank", label = "id", 
+            auto_cut_x = TRUE, groups = c("left", "right"), 
+            xlab = "Log2FC", top = 10, max.overlaps = Inf)
+```
+
+## cd19_1to2_v_egfr_1to2
+
+```{r,fig.height=8,fig.width=8}
+cd19_1to2_v_egfr_1to2.gdata <- ReadRRA("cd19_1to2_v_egfr_1to2.gene_summary.txt", score = c("lfc", "rra")[1])
+cd19_1to2_v_egfr_1to2.sdata <- ReadsgRRA("cd19_1to2_v_egfr_1to2.sgrna_summary.txt")
+
+cd19_1to2_v_egfr_1to2.gdata$negLogFDR = -log10(cd19_1to2_v_egfr_1to2.gdata$FDR)
+ScatterView(cd19_1to2_v_egfr_1to2.gdata, x = "Score", y = "negLogFDR", 
+            label = "id", model = "volcano", top = 15,
+            display_cut = TRUE, max.overlaps = Inf)
+
+cd19_1to2_v_egfr_1to2.gdata$Rank = rank(cd19_1to2_v_egfr_1to2.gdata$Score)
+ScatterView(cd19_1to2_v_egfr_1to2.gdata, x = "Rank", y = "Score", label = "id", 
+                 top = 10, auto_cut_y = TRUE, ylab = "Log2FC", 
+                 groups = c("top", "bottom"), max.overlaps = Inf) + 
+  ggtitle("cd19_1to2_v_egfr_1to2") + theme(plot.title = element_text(size = 12, face = "bold"))
+
+
+ScatterView(cd19_1to2_v_egfr_1to2.gdata, x = "Score", y = "Rank", label = "id", 
+            auto_cut_x = TRUE, groups = c("left", "right"), 
+            xlab = "Log2FC", top = 10, max.overlaps = Inf)
+```
+
+## cd19_1to10_v_egfr_1to10
+
+```{r,fig.height=8,fig.width=8}
+cd19_1to10_v_egfr_1to10.gdata <- ReadRRA("cd19_1to10_v_egfr_1to10.gene_summary.txt", score = c("lfc", "rra")[1])
+cd19_1to10_v_egfr_1to10.sdata <- ReadsgRRA("cd19_1to10_v_egfr_1to10.sgrna_summary.txt")
+
+cd19_1to10_v_egfr_1to10.gdata$negLogFDR = -log10(cd19_1to10_v_egfr_1to10.gdata$FDR)
+ScatterView(cd19_1to10_v_egfr_1to10.gdata, x = "Score", y = "negLogFDR", 
+            label = "id", model = "volcano", top = 15,
+            display_cut = TRUE, max.overlaps = Inf)
+
+cd19_1to10_v_egfr_1to10.gdata$Rank = rank(cd19_1to10_v_egfr_1to10.gdata$Score)
+ScatterView(cd19_1to10_v_egfr_1to10.gdata, x = "Rank", y = "Score", label = "id", 
+                 top = 10, auto_cut_y = TRUE, ylab = "Log2FC",
+                 groups = c("top", "bottom"), max.overlaps = Inf) + 
+  ggtitle("cd19_1to10_v_egfr_1to10") + theme(plot.title = element_text(size = 12, face = "bold"))
+
+
+ScatterView(cd19_1to10_v_egfr_1to10.gdata, x = "Score", y = "Rank", label = "id", 
+            auto_cut_x = TRUE, groups = c("left", "right"), 
+            xlab = "Log2FC", top = 10, max.overlaps = Inf)
+```
+
+
+## Fig2b
+
+```{r,fig.height=3,fig.width=3}
+#hits <- c("Jak1","Jak2","Stat1","Ifngr1","H2-T23","Cd19")
+
+BM_cd19.10m_v_egfr.15m.gdata$Rank = rank(BM_cd19.10m_v_egfr.15m.gdata$Score)
+#BM_cd19.10m_v_egfr.15m.gdata$absScore = abs(BM_cd19.10m_v_egfr.15m.gdata$Score)
+#BM_cd19.10m_v_egfr.15m.gdata  <- BM_cd19.10m_v_egfr.15m.gdata %>% mutate(toHighlight = ifelse(id %in% hits, "highlight", "not"))
+#BM_cd19.10m_v_egfr.15m.gdata$color[match(c('Jak2','Stat1','Ifngr1','H2-T23','Cd19'),BM_cd19.10m_v_egfr.15m.gdata$id)]
+a <- ScatterView(BM_cd19.10m_v_egfr.15m.gdata, x = "Rank", y = "Score", label = "id",
+                 toplabels = c("Jak1","Jak2","Stat1","Ifngr1","H2-T23","Cd19"), auto_cut_y = TRUE, ylab = "Log2 fold change", 
+                 groups = c("top", "bottom"), max.overlaps = Inf) + ylim(-6, 6) + 
+  ggtitle("BM_cd19.10m_v_egfr.15m") + theme(plot.title = element_text(size = 12, face = "bold"))
+
+BM_cd19.15m_v_egfr.15m.gdata$Rank = rank(BM_cd19.15m_v_egfr.15m.gdata$Score)
+b <- ScatterView(BM_cd19.15m_v_egfr.15m.gdata, x = "Rank", y = "Score", label = "id", 
+                 toplabels = c("Jak1","Jak2","Stat1","Ifngr1","H2-T23","Cd19"), auto_cut_y = TRUE, ylab = "Log2 fold change", 
+                 groups = c("top", "bottom"), max.overlaps = Inf) + ylim(-6, 6) + 
+  ggtitle("BM_cd19.15m_v_egfr.15m") + theme(plot.title = element_text(size = 12, face = "bold"))
+
+SP_cd19.10m_v_egfr.15m.gdata$Rank = rank(SP_cd19.10m_v_egfr.15m.gdata$Score)
+c <- ScatterView(SP_cd19.10m_v_egfr.15m.gdata, x = "Rank", y = "Score", label = "id", 
+                 toplabels = c("Jak1","Jak2","Stat1","Ifngr1","H2-T23","Cd19"), auto_cut_y = TRUE, ylab = "Log2 fold change", 
+                 groups = c("top", "bottom"), max.overlaps = Inf) + ylim(-6, 6) +
+  ggtitle("SP_cd19.10m_v_egfr.15m") + theme(plot.title = element_text(size = 12, face = "bold"))
+
+SP_cd19.15m_v_egfr.15m.gdata$Rank = rank(SP_cd19.15m_v_egfr.15m.gdata$Score)
+d <- ScatterView(SP_cd19.15m_v_egfr.15m.gdata, x = "Rank", y = "Score", label = "id", 
+                 toplabels = c("Jak1","Jak2","Stat1","Ifngr1","H2-T23","Cd19"), auto_cut_y = TRUE, ylab = "Log2 fold change", 
+                 groups = c("top", "bottom"), max.overlaps = Inf) + ylim(-6, 6) +
+  ggtitle("SP_cd19.15m_v_egfr.15m") + theme(plot.title = element_text(size = 12, face = "bold"))
+
+cd19_1to2_v_egfr_1to2.gdata$Rank = rank(cd19_1to2_v_egfr_1to2.gdata$Score)
+e <- ScatterView(cd19_1to2_v_egfr_1to2.gdata, x = "Rank", y = "Score", label = "id", 
+                 toplabels = c("Jak1","Jak2","Stat1","Ifngr1","H2-T23","Cd19"), auto_cut_y = TRUE, ylab = "Log2 fold change", 
+                 groups = c("top", "bottom"), max.overlaps = Inf) + ylim(-6, 6) +
+  ggtitle("cd19_1to2_v_egfr_1to2") + theme(plot.title = element_text(size = 12, face = "bold"))
+
+cd19_1to10_v_egfr_1to10.gdata$Rank = rank(cd19_1to10_v_egfr_1to10.gdata$Score)
+f <- ScatterView(cd19_1to10_v_egfr_1to10.gdata, x = "Rank", y = "Score", label = "id", 
+                 toplabels = c("Jak1","Jak2","Stat1","Ifngr1","H2-T23","Cd19"), auto_cut_y = TRUE, ylab = "Log2 fold change", 
+                 groups = c("top", "bottom"), max.overlaps = Inf) + ylim(-6, 6) +
+  ggtitle("cd19_1to10_v_egfr_1to10") + theme(plot.title = element_text(size = 12, face = "bold"))
+```
+
+```{r, fig.width=12, fig.height=6}
+ggarrange(a,b,c,d, ncol=4, nrow=1)
+```
+
+
+```{r, fig.width=12, fig.height=6}
+ggarrange(e,f, ncol=4, nrow=1)
+```
+# trying to make plots
+
+## Assembling mageck gene-level fold changes
+
+```{r}
+SP.10m <- SP_cd19.10m_v_egfr.15m.gdata
+colnames(SP.10m) <- c("id","SP.10m.Score","SP.10m.FDR","SP.10m.negLogFDR","SP.10m.Rank")
+SP.15m <- SP_cd19.15m_v_egfr.15m.gdata
+colnames(SP.15m) <- c("id","SP.15m.Score","SP.15m.FDR","SP.15m.negLogFDR","SP.15m.Rank")
+BM.10m <- BM_cd19.10m_v_egfr.15m.gdata
+colnames(BM.10m) <- c("id","BM.10m.Score","BM.10m.FDR","BM.10m.negLogFDR","BM.10m.Rank")
+BM.15m <- BM_cd19.15m_v_egfr.15m.gdata
+colnames(BM.15m) <- c("id","BM.15m.Score","BM.15m.FDR","BM.15m.negLogFDR","BM.15m.Rank")
+ET.1.2 <- cd19_1to2_v_egfr_1to2.gdata
+colnames(ET.1.2) <- c("id","ET.1.2.Score","ET.1.2.FDR","ET.1.2.negLogFDR","ET.1.2.Rank")
+ET.1.10 <- cd19_1to10_v_egfr_1to10.gdata
+colnames(ET.1.10) <- c("id","ET.1.10.Score","ET.1.10.FDR","ET.1.10.negLogFDR","ET.1.10.Rank")
+
+Mageck.combined <- merge(x=SP.10m, y=SP.15m, by.x=c("id"),by.y=c("id"), all=TRUE)
+Mageck.combined <- merge(x=Mageck.combined,y=BM.10m, by.x=c("id"),by.y=c("id"), all=TRUE)
+Mageck.combined <- merge(x=Mageck.combined,y=BM.15m, by.x=c("id"),by.y=c("id"), all=TRUE)
+Mageck.combined <- merge(x=Mageck.combined,y=ET.1.2, by.x=c("id"),by.y=c("id"), all=TRUE)
+Mageck.combined <- merge(x=Mageck.combined,y=ET.1.10, by.x=c("id"),by.y=c("id"), all=TRUE)
+```
+
+## Make Plots
+
+## testing
+
+```{r}
+sorted_df <- SP.10m %>% dplyr::arrange(SP.10m.Rank)
+sorted_df <- sorted_df %>% mutate(top = if_else(sorted_df$SP.10m.Rank <= 10 | sorted_df$SP.10m.Rank >= (nrow(sorted_df)-9),"top","rest"))
+sorted_df$color <- "others"
+sorted_df$color[match(c("Jak1","Jak2","Stat1","Ifngr1","H2-T23","Cd19"),sorted_df$id)] <- "hits"
+df_to_highlight <- sorted_df[match(c("Jak1","Jak2","Stat1","Ifngr1","H2-T23","Cd19"),sorted_df$id),]
+
+ggplot(sorted_df, aes(x=SP.10m.Rank, y=SP.10m.Score)) + geom_point(aes(size=abs(SP.10m.Score), color = "grey50")) + 
+  geom_point(data=df_to_highlight, aes(size=abs(df_to_highlight$SP.10m.Score), color=color)) +
+  scale_color_manual(values = c("hits" = "#CC0000", "others" = "grey50")) +
+  theme_bw() + 
+#  geom_text_repel(data=df_to_highlight, aes(label = id), min.segment.length = 0) + 
+  theme(panel.border = element_blank(), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.line = element_line(colour = "black")) + 
+  theme(axis.text=element_text(size=20)) + 
+  ggtitle("SP.10m") + 
+  scale_y_continuous(breaks=seq(-6,6,2), limits=c(-7,7)) + geom_hline(yintercept=0, color="grey50")
+```
+
+## First version
+
+```{r,fig.width=5,fig.height=8}
+sorted_df <- SP.10m %>% dplyr::arrange(SP.10m.Rank)
+sorted_df <- sorted_df %>% mutate(top = if_else(sorted_df$SP.10m.Rank <= 10 | sorted_df$SP.10m.Rank >= (nrow(sorted_df)-9),"top","rest"))
+sorted_df$color <- "others"
+sorted_df$color[match(c("Jak1","Jak2","Stat1","Ifngr1","H2-T23","Cd19"),sorted_df$id)] <- "hits"
+df_to_highlight <- sorted_df[match(c("Jak1","Jak2","Stat1","Ifngr1","H2-T23","Cd19"),sorted_df$id),]
+
+SP.10m.plot <- ggplot(sorted_df, aes(x=SP.10m.Rank, y=SP.10m.Score)) + geom_point(aes(size=abs(SP.10m.Score), color = top)) + 
+  scale_color_manual(values = c("top" = "#CC0000", "rest" = "grey50")) +
+  theme_bw() + 
+#  geom_text_repel(data=df_to_highlight, aes(label = id), min.segment.length = 0) + 
+  theme(panel.border = element_blank(), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.line = element_line(colour = "black")) + 
+  theme(axis.text=element_text(size=20)) + 
+  ggtitle("SP.10m") + 
+  scale_y_continuous(breaks=seq(-6,6,2), limits=c(-7,7)) + geom_hline(yintercept=0, color="grey50")
+########
+sorted_df <- SP.15m %>% dplyr::arrange(SP.15m.Rank)
+sorted_df <- sorted_df %>% mutate(top = if_else(sorted_df$SP.15m.Rank <= 10 | sorted_df$SP.15m.Rank >= (nrow(sorted_df)-9),"top","rest"))
+sorted_df$color <- "others"
+sorted_df$color[match(c("Jak1","Jak2","Stat1","Ifngr1","H2-T23","Cd19"),sorted_df$id)] <- "hits"
+df_to_highlight <- sorted_df[match(c("Jak1","Jak2","Stat1","Ifngr1","H2-T23","Cd19"),sorted_df$id),]
+
+SP.15m.plot <- ggplot(sorted_df, aes(x=SP.15m.Rank, y=SP.15m.Score)) + geom_point(aes(size=abs(SP.15m.Score), color = top)) + 
+  scale_color_manual(values = c("top" = "#CC0000", "rest" = "grey50")) +
+  theme_bw() + 
+#  geom_text_repel(data=df_to_highlight, aes(label = id), min.segment.length = 0) + 
+  theme(panel.border = element_blank(), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.line = element_line(colour = "black")) + 
+  theme(axis.text=element_text(size=20)) + 
+  ggtitle("SP.15m") + 
+  scale_y_continuous(breaks=seq(-6,6,2), limits=c(-7,7)) + geom_hline(yintercept=0, color="grey50")
+########
+sorted_df <- BM.10m %>% dplyr::arrange(BM.10m.Rank)
+sorted_df <- sorted_df %>% mutate(top = if_else(sorted_df$BM.10m.Rank <= 10 | sorted_df$BM.10m.Rank >= (nrow(sorted_df)-9),"top","rest"))
+sorted_df$color <- "others"
+sorted_df$color[match(c("Jak1","Jak2","Stat1","Ifngr1","H2-T23","Cd19"),sorted_df$id)] <- "hits"
+df_to_highlight <- sorted_df[match(c("Jak1","Jak2","Stat1","Ifngr1","H2-T23","Cd19"),sorted_df$id),]
+
+BM.10m.plot <- ggplot(sorted_df, aes(x=BM.10m.Rank, y=BM.10m.Score)) + geom_point(aes(size=abs(BM.10m.Score), color = top)) + 
+  scale_color_manual(values = c("top" = "#CC0000", "rest" = "grey50")) +
+  theme_bw() + 
+#  geom_text_repel(data=df_to_highlight, aes(label = id), min.segment.length = 0) + 
+  theme(panel.border = element_blank(), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.line = element_line(colour = "black")) + 
+  theme(axis.text=element_text(size=20)) + 
+  ggtitle("BM.10m") + 
+  scale_y_continuous(breaks=seq(-6,6,2), limits=c(-7,7)) + geom_hline(yintercept=0, color="grey50")
+########
+sorted_df <- BM.15m %>% dplyr::arrange(BM.15m.Rank)
+sorted_df <- sorted_df %>% mutate(top = if_else(sorted_df$BM.15m.Rank <= 10 | sorted_df$BM.15m.Rank >= (nrow(sorted_df)-9),"top","rest"))
+sorted_df$color <- "others"
+sorted_df$color[match(c("Jak1","Jak2","Stat1","Ifngr1","H2-T23","Cd19"),sorted_df$id)] <- "hits"
+df_to_highlight <- sorted_df[match(c("Jak1","Jak2","Stat1","Ifngr1","H2-T23","Cd19"),sorted_df$id),]
+
+BM.15m.plot <- ggplot(sorted_df, aes(x=BM.15m.Rank, y=BM.15m.Score)) + geom_point(aes(size=abs(BM.15m.Score), color = top)) + 
+  scale_color_manual(values = c("top" = "#CC0000", "rest" = "grey50")) +
+  theme_bw() + 
+#  geom_text_repel(data=df_to_highlight, aes(label = id), min.segment.length = 0) + 
+  theme(panel.border = element_blank(), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.line = element_line(colour = "black")) + 
+  theme(axis.text=element_text(size=20)) + 
+  ggtitle("BM.15m") + 
+  scale_y_continuous(breaks=seq(-6,6,2), limits=c(-7,7)) + geom_hline(yintercept=0, color="grey50")
+########
+########
+sorted_df <-ET.1.2 %>% dplyr::arrange(ET.1.2.Rank)
+sorted_df <- sorted_df %>% mutate(top = if_else(sorted_df$ET.1.2.Rank <= 10 | sorted_df$ET.1.2.Rank >= (nrow(sorted_df)-9),"top","rest"))
+sorted_df$color <- "others"
+sorted_df$color[match(c("Jak1","Jak2","Stat1","Ifngr1","H2-T23","Cd19"),sorted_df$id)] <- "hits"
+df_to_highlight <- sorted_df[match(c("Jak1","Jak2","Stat1","Ifngr1","H2-T23","Cd19"),sorted_df$id),]
+
+ET.1.2.plot <- ggplot(sorted_df, aes(x=ET.1.2.Rank, y=ET.1.2.Score)) + geom_point(aes(size=abs(ET.1.2.Score), color = top)) + 
+  scale_color_manual(values = c("top" = "#CC0000", "rest" = "grey50")) +
+  theme_bw() + 
+#  geom_text_repel(data=df_to_highlight, aes(label = id), min.segment.length = 0) + 
+  theme(panel.border = element_blank(), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.line = element_line(colour = "black")) + 
+  theme(axis.text=element_text(size=20)) + 
+  ggtitle("ET.1.2") + 
+  scale_y_continuous(breaks=seq(-6,6,2), limits=c(-7,7)) + geom_hline(yintercept=0, color="grey50")
+########
+sorted_df <-ET.1.10 %>% dplyr::arrange(ET.1.10.Rank)
+sorted_df <- sorted_df %>% mutate(top = if_else(sorted_df$ET.1.10.Rank <= 10 | sorted_df$ET.1.10.Rank >= (nrow(sorted_df)-9),"top","rest"))
+sorted_df$color <- "others"
+sorted_df$color[match(c("Jak1","Jak2","Stat1","Ifngr1","H2-T23","Cd19"),sorted_df$id)] <- "hits"
+df_to_highlight <- sorted_df[match(c("Jak1","Jak2","Stat1","Ifngr1","H2-T23","Cd19"),sorted_df$id),]
+
+ET.1.10.plot <- ggplot(sorted_df, aes(x=ET.1.10.Rank, y=ET.1.10.Score)) + geom_point(aes(size=abs(ET.1.10.Score), color = top)) + 
+  scale_color_manual(values = c("top" = "#CC0000", "rest" = "grey50")) +
+  theme_bw() + 
+#  geom_text_repel(data=df_to_highlight, aes(label = id), min.segment.length = 0) + 
+  theme(panel.border = element_blank(), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.line = element_line(colour = "black")) + 
+  theme(axis.text=element_text(size=20)) + 
+  ggtitle("ET.1.10") + 
+  scale_y_continuous(breaks=seq(-6,6,2), limits=c(-7,7)) + geom_hline(yintercept=0, color="grey50")
+```
+
+```{r, fig.width=20, fig.height=8}
+inVivo <- ggarrange(BM.15m.plot,BM.10m.plot,SP.15m.plot,SP.10m.plot, ncol=4, nrow=1)
+inVivo
+
+pdf('inVivo_noLab.pdf',width=20, height=8)
+inVivo
+dev.off()
+```
+
+```{r, fig.width=10, fig.height=8}
+in_Vitro <- ggarrange(ET.1.2.plot,ET.1.10.plot, ncol=2, nrow=1)
+in_Vitro
+
+pdf('inVitro_noLab.pdf',width=10, height=8)
+print(ggarrange(ET.1.2.plot,ET.1.10.plot, ncol=2, nrow=1))
+dev.off()
+```
+
+## second version
+
+```{r,fig.width=5,fig.height=8}
+sorted_df <- SP.10m %>% dplyr::arrange(SP.10m.Rank)
+sorted_df <- sorted_df %>% mutate(top = if_else(sorted_df$SP.10m.Rank <= 10 | sorted_df$SP.10m.Rank >= (nrow(sorted_df)-9),"top","rest"))
+sorted_df$color <- "others"
+sorted_df$color[match(c("Jak1","Jak2","Stat1","Ifngr1","H2-T23","Cd19"),sorted_df$id)] <- "hits"
+df_to_highlight <- sorted_df[match(c("Jak1","Jak2","Stat1","Ifngr1","H2-T23","Cd19"),sorted_df$id),]
+
+SP.10m.plot <- ggplot(sorted_df, aes(x=SP.10m.Rank, y=SP.10m.Score)) + geom_point(aes(size=abs(SP.10m.Score), color = "grey50")) + 
+  geom_point(data=df_to_highlight, aes(size=abs(SP.10m.Score), color=color)) +
+  scale_color_manual(values = c("hits" = "#CC0000", "others" = "grey50")) +
+  theme_bw() + 
+#  geom_text_repel(data=df_to_highlight, aes(label = id), min.segment.length = 0) + 
+  theme(panel.border = element_blank(), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.line = element_line(color = "black")) + 
+  theme(axis.text=element_text(size=20)) + 
+  ggtitle("SP.10m") + 
+  scale_y_continuous(breaks=seq(-4,6,2), limits=c(-4,6)) + geom_hline(yintercept=0, color="grey50")
+SP.10m.plot
+########
+sorted_df <- SP.15m %>% dplyr::arrange(SP.15m.Rank)
+sorted_df <- sorted_df %>% mutate(top = if_else(sorted_df$SP.15m.Rank <= 10 | sorted_df$SP.15m.Rank >= (nrow(sorted_df)-9),"top","rest"))
+sorted_df$color <- "others"
+sorted_df$color[match(c("Jak1","Jak2","Stat1","Ifngr1","H2-T23","Cd19"),sorted_df$id)] <- "hits"
+df_to_highlight <- sorted_df[match(c("Jak1","Jak2","Stat1","Ifngr1","H2-T23","Cd19"),sorted_df$id),]
+
+SP.15m.plot <- ggplot(sorted_df, aes(x=SP.15m.Rank, y=SP.15m.Score)) + geom_point(aes(size=abs(SP.15m.Score), color = "grey50")) + 
+  geom_point(data=df_to_highlight, aes(size=abs(SP.15m.Score), color=color)) +
+  scale_color_manual(values = c("hits" = "#CC0000", "others" = "grey50")) +
+  theme_bw() + 
+#  geom_text_repel(data=df_to_highlight, aes(label = id), min.segment.length = 0) + 
+  theme(panel.border = element_blank(), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.line = element_line(color = "black")) + 
+  theme(axis.text=element_text(size=20)) + 
+  ggtitle("SP.15m") + 
+  scale_y_continuous(breaks=seq(-4,6,2), limits=c(-4,6)) + geom_hline(yintercept=0, color="grey50")
+SP.15m.plot
+########
+sorted_df <- BM.10m %>% dplyr::arrange(BM.10m.Rank)
+sorted_df <- sorted_df %>% mutate(top = if_else(sorted_df$BM.10m.Rank <= 10 | sorted_df$BM.10m.Rank >= (nrow(sorted_df)-9),"top","rest"))
+sorted_df$color <- "others"
+sorted_df$color[match(c("Jak1","Jak2","Stat1","Ifngr1","H2-T23","Cd19"),sorted_df$id)] <- "hits"
+df_to_highlight <- sorted_df[match(c("Jak1","Jak2","Stat1","Ifngr1","H2-T23","Cd19"),sorted_df$id),]
+
+BM.10m.plot <- ggplot(sorted_df, aes(x=BM.10m.Rank, y=BM.10m.Score)) + geom_point(aes(size=abs(BM.10m.Score), color = "grey50")) + 
+  geom_point(data=df_to_highlight, aes(size=abs(BM.10m.Score), color=color)) +
+  scale_color_manual(values = c("hits" = "#CC0000", "others" = "grey50")) +
+  theme_bw() + 
+#  geom_text_repel(data=df_to_highlight, aes(label = id), min.segment.length = 0) + 
+  theme(panel.border = element_blank(), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.line = element_line(color = "black")) + 
+  theme(axis.text=element_text(size=20)) + 
+  ggtitle("BM.10m") + 
+  scale_y_continuous(breaks=seq(-4,6,2), limits=c(-4,6)) + geom_hline(yintercept=0, color="grey50")
+BM.10m.plot
+########
+sorted_df <- BM.15m %>% dplyr::arrange(BM.15m.Rank)
+sorted_df <- sorted_df %>% mutate(top = if_else(sorted_df$BM.15m.Rank <= 10 | sorted_df$BM.15m.Rank >= (nrow(sorted_df)-9),"top","rest"))
+sorted_df$color <- "others"
+sorted_df$color[match(c("Jak1","Jak2","Stat1","Ifngr1","H2-T23","Cd19"),sorted_df$id)] <- "hits"
+df_to_highlight <- sorted_df[match(c("Jak1","Jak2","Stat1","Ifngr1","H2-T23","Cd19"),sorted_df$id),]
+
+BM.15m.plot <- ggplot(sorted_df, aes(x=BM.15m.Rank, y=BM.15m.Score)) + geom_point(aes(size=abs(BM.15m.Score), color = "grey50")) + 
+  geom_point(data=df_to_highlight, aes(size=abs(BM.15m.Score), color=color)) +
+  scale_color_manual(values = c("hits" = "#CC0000", "others" = "grey50")) +
+  theme_bw() + 
+#  geom_text_repel(data=df_to_highlight, aes(label = id), min.segment.length = 0) + 
+  theme(panel.border = element_blank(), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.line = element_line(color = "black")) + 
+  theme(axis.text=element_text(size=20)) + 
+  ggtitle("BM.15m") + 
+  scale_y_continuous(breaks=seq(-4,6,2), limits=c(-4,6)) + geom_hline(yintercept=0, color="grey50")
+BM.15m.plot
+########
+########
+sorted_df <-ET.1.2 %>% dplyr::arrange(ET.1.2.Rank)
+sorted_df <- sorted_df %>% mutate(top = if_else(sorted_df$ET.1.2.Rank <= 10 | sorted_df$ET.1.2.Rank >= (nrow(sorted_df)-9),"top","rest"))
+sorted_df$color <- "others"
+sorted_df$color[match(c("Jak1","Jak2","Stat1","Ifngr1","H2-T23","Cd19"),sorted_df$id)] <- "hits"
+df_to_highlight <- sorted_df[match(c("Jak1","Jak2","Stat1","Ifngr1","H2-T23","Cd19"),sorted_df$id),]
+
+ET.1.2.plot <- ggplot(sorted_df, aes(x=ET.1.2.Rank, y=ET.1.2.Score)) + geom_point(aes(size=abs(ET.1.2.Score), color = "grey50")) + 
+  geom_point(data=df_to_highlight, aes(size=abs(ET.1.2.Score), color=color)) +
+  scale_color_manual(values = c("hits" = "#CC0000", "others" = "grey50")) +
+  theme_bw() + 
+#  geom_text_repel(data=df_to_highlight, aes(label = id), min.segment.length = 0) + 
+  theme(panel.border = element_blank(), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.line = element_line(color = "black")) + 
+  theme(axis.text=element_text(size=20)) + 
+  ggtitle("ET.1.2") + 
+  scale_y_continuous(breaks=seq(-4,6,2), limits=c(-4,6)) + geom_hline(yintercept=0, color="grey50")
+ET.1.2.plot
+########
+sorted_df <-ET.1.10 %>% dplyr::arrange(ET.1.10.Rank)
+sorted_df <- sorted_df %>% mutate(top = if_else(sorted_df$ET.1.10.Rank <= 10 | sorted_df$ET.1.10.Rank >= (nrow(sorted_df)-9),"top","rest"))
+sorted_df$color <- "others"
+sorted_df$color[match(c("Jak1","Jak2","Stat1","Ifngr1","H2-T23","Cd19"),sorted_df$id)] <- "hits"
+df_to_highlight <- sorted_df[match(c("Jak1","Jak2","Stat1","Ifngr1","H2-T23","Cd19"),sorted_df$id),]
+
+ET.1.10.plot <- ggplot(sorted_df, aes(x=ET.1.10.Rank, y=ET.1.10.Score)) + geom_point(aes(size=abs(ET.1.10.Score), color = "grey50")) + 
+  geom_point(data=df_to_highlight, aes(size=abs(ET.1.10.Score), color=color)) +
+  scale_color_manual(values = c("hits" = "#CC0000", "others" = "grey50")) +
+  theme_bw() + 
+#  geom_text_repel(data=df_to_highlight, aes(label = id), min.segment.length = 0) + 
+  theme(panel.border = element_blank(), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), axis.line = element_line(color = "black")) + 
+  theme(axis.text=element_text(size=20)) + 
+  ggtitle("ET.1.10") + 
+  scale_y_continuous(breaks=seq(-4,6,2), limits=c(-4,6)) + geom_hline(yintercept=0, color="grey50")
+ET.1.10.plot
+```
+
+```{r, fig.width=20, fig.height=8}
+inVivo <- ggarrange(BM.15m.plot,BM.10m.plot,SP.15m.plot,SP.10m.plot, ncol=4, nrow=1)
+inVivo
+
+pdf('inVivo_noLab_v3.pdf',width=20, height=8)
+inVivo
+dev.off()
+```
+
+```{r, fig.width=10, fig.height=8}
+in_Vitro <- ggarrange(ET.1.2.plot,ET.1.10.plot, ncol=2, nrow=1)
+in_Vitro
+
+pdf('inVitro_noLab_v3.pdf',width=10, height=8)
+print(ggarrange(ET.1.2.plot,ET.1.10.plot, ncol=2, nrow=1))
+dev.off()
+```
+
+# Venn Diagrams - Prepare gene lists
+
+```{r}
+FDR.threshold <- 0.1
+Score.threshold <- 1
+
+SP_cd19.10m_v_egfr.15m.enrich <- SP_cd19.10m_v_egfr.15m.gdata %>% filter(Score >= Score.threshold & FDR <= FDR.threshold) %>% dplyr::select(c("id"))
+SP_cd19.15m_v_egfr.15m.enrich <- SP_cd19.15m_v_egfr.15m.gdata %>% filter(Score >= Score.threshold & FDR <= FDR.threshold) %>% dplyr::select(c("id"))
+BM_cd19.10m_v_egfr.15m.enrich <- BM_cd19.10m_v_egfr.15m.gdata %>% filter(Score >= Score.threshold & FDR <= FDR.threshold) %>% dplyr::select(c("id"))
+BM_cd19.15m_v_egfr.15m.enrich <- BM_cd19.15m_v_egfr.15m.gdata %>% filter(Score >= Score.threshold & FDR <= FDR.threshold) %>% dplyr::select(c("id"))
+
+cd19_1to2_v_egfr_1to2.enrich <- cd19_1to2_v_egfr_1to2.gdata %>% filter(Score >= Score.threshold & FDR <= FDR.threshold) %>% dplyr::select(c("id"))
+cd19_1to10_v_egfr_1to10.enrich <- cd19_1to10_v_egfr_1to10.gdata %>% filter(Score >= Score.threshold & FDR <= FDR.threshold) %>% dplyr::select(c("id"))
+
+SP_cd19.10m_v_egfr.15m.deplete <- SP_cd19.10m_v_egfr.15m.gdata %>% filter(Score <= -Score.threshold & FDR <= FDR.threshold) %>% dplyr::select(c("id"))
+SP_cd19.15m_v_egfr.15m.deplete <- SP_cd19.15m_v_egfr.15m.gdata %>% filter(Score <= -Score.threshold & FDR <= FDR.threshold) %>% dplyr::select(c("id"))
+BM_cd19.10m_v_egfr.15m.deplete <- BM_cd19.10m_v_egfr.15m.gdata %>% filter(Score <= -Score.threshold & FDR <= FDR.threshold) %>% dplyr::select(c("id"))
+BM_cd19.15m_v_egfr.15m.deplete <- BM_cd19.15m_v_egfr.15m.gdata %>% filter(Score <= -Score.threshold & FDR <= FDR.threshold) %>% dplyr::select(c("id"))
+
+cd19_1to2_v_egfr_1to2.deplete <- cd19_1to2_v_egfr_1to2.gdata %>% filter(Score <= -Score.threshold & FDR <= FDR.threshold) %>% dplyr::select(c("id"))
+cd19_1to10_v_egfr_1to10.deplete <- cd19_1to10_v_egfr_1to10.gdata %>% filter(Score <= -Score.threshold & FDR <= FDR.threshold) %>% dplyr::select(c("id"))
+```
+
+```{r}
+vivo.enrich <- rbind(SP_cd19.10m_v_egfr.15m.enrich,SP_cd19.15m_v_egfr.15m.enrich,BM_cd19.10m_v_egfr.15m.enrich,BM_cd19.15m_v_egfr.15m.enrich)
+vivo.deplete <- rbind(SP_cd19.10m_v_egfr.15m.deplete,SP_cd19.15m_v_egfr.15m.deplete,BM_cd19.10m_v_egfr.15m.deplete,BM_cd19.15m_v_egfr.15m.deplete)
+
+vitro.enrich <- rbind(cd19_1to2_v_egfr_1to2.enrich,cd19_1to10_v_egfr_1to10.enrich)
+vitro.deplete <- rbind(cd19_1to2_v_egfr_1to2.deplete,cd19_1to10_v_egfr_1to10.deplete)
+```
+
+```{r}
+vivo.enrich.unique <- unique(vivo.enrich$id)
+vivo.deplete.unique <- unique(vivo.deplete$id)
+
+vitro.enrich.unique <- unique(vitro.enrich$id)
+vitro.deplete.unique <- unique(vitro.deplete$id)
+```
+
+## Generate venn diagrams from gene lists
+
+```{r,fig.width=8,fig.height=8}
+deplete.overlap <- calculate.overlap(
+x = list(
+"Vitro" = vitro.deplete.unique,
+"Vivo" = vivo.deplete.unique
+)
+)
+
+deplete.venn.plot <- draw.pairwise.venn(length(deplete.overlap$a1), length(deplete.overlap$a2),length(deplete.overlap$a3),
+                                category = c("vitro.dep", "vivo.dep"),
+                                fill = c("grey50", "grey50"),
+                                rotation.degree = 180,
+                                lty = "blank"
+)
+grid.draw(deplete.venn.plot)
+grid.newpage()
+
+#pdf(file="deplete_v2.pdf",width=6, height=6)
+#grid.draw(deplete.venn.plot)
+#dev.off()
+####################
+enrich.overlap <- calculate.overlap(
+x = list(
+"Vitro" = vitro.enrich.unique,
+"Vivo" = vivo.enrich.unique
+)
+)
+
+enrich.venn.plot <- draw.pairwise.venn(length(enrich.overlap$a2), length(enrich.overlap$a1), length(enrich.overlap$a3),
+                                category = c("vitro.en", "vivo.en"),
+                                fill = c("grey50", "grey50"),
+                                rotation.degree = 180,
+                                lty = "blank"
+)
+
+grid.draw(enrich.venn.plot)
+grid.newpage()
+
+#pdf(file="enrich_v2.pdf",width=6, height=6)
+#grid.draw(enrich.venn.plot)
+#dev.off()
+```
+
+## Checking Lists
+
+```{r}
+for (i in ls(pattern="m.deplete")){
+  print(i)
+  print((get(i)))
+}
+```
+# Viewing individual guides
+
+## MPM_21_v_RPMI_21
+
+```{r}
+sgRankView(MPM_21_v_RPMI_21.sdata, top = 3, bottom = 3)
+
+plotList <- MPM_21_v_RPMI_21.gdata %>% filter(abs(Score) > 1.2) %>% dplyr::select(id)
+sgRankView(MPM_21_v_RPMI_21.sdata, top = 0, bottom = 0, gene=plotList$id)
+```
+
+## MPM_5_v_RPMI_5
+
+```{r}
+sgRankView(MPM_5_v_RPMI_5.sdata, top = 3, bottom = 3)
+
+plotList <- MPM_5_v_RPMI_5.gdata %>% filter(abs(Score) > 1.2) %>% dplyr::select(id)
+sgRankView(MPM_5_v_RPMI_5.sdata, top = 0, bottom = 0, gene=plotList$id)
+```
+
+## RPMI_5_v_RPMI_21
+
+```{r}
+sgRankView(RPMI_5_v_RPMI_21.sdata, top = 3, bottom = 3)
+
+plotList <- RPMI_5_v_RPMI_21.gdata %>% filter(abs(Score) > 1.2) %>% dplyr::select(id)
+sgRankView(RPMI_5_v_RPMI_21.sdata, top = 0, bottom = 0, gene=plotList$id)
+```
+
+## MPM_5_v_MPM_21
+
+```{r}
+sgRankView(MPM_5_v_MPM_21.sdata, top = 3, bottom = 3)
+
+plotList <- MPM_5_v_MPM_21.gdata %>% filter(abs(Score) > 1.2) %>% dplyr::select(id)
+sgRankView(MPM_5_v_MPM_21.sdata, top = 0, bottom = 0, gene=plotList$id)
+```
+
+```{r}
+goiToPlot <- as.data.frame(c("Ifngr1","Jak2","Stat1","H2-T23","Cd19"))
+colnames(goiToPlot) <- 'id'
+```
+
+## SP_cd19.10m_v_egfr.15m
+
+```{r,fig.width=3,fig.height=2}
+#sgRankView(SP_cd19.10m_v_egfr.15m.sdata, top = 3, bottom = 3)
+
+#plotList <- SP_cd19.10m_v_egfr.15m.gdata %>% filter(abs(Score) > 1.2) %>% select(id)
+#plotList <- SP_cd19.10m_v_egfr.15m.gdata %>% filter(id %in% c("Ifngr1", "Jak2", "Stat1", "Qa-1", "Cd19")) %>% select(id)
+
+gv1 <- sgRankView(SP_cd19.10m_v_egfr.15m.sdata, top = 0, bottom = 0, gene=goiToPlot$id) + xlim(-7, 7) + 
+  ggtitle("SP_cd19.10m_v_egfr.15m") + theme(plot.title = element_text(size = 12, face = "bold"))
+gv1
+```
+
+## SP_cd19.15m_v_egfr.15m
+
+```{r,fig.width=3,fig.height=2}
+#sgRankView(SP_cd19.15m_v_egfr.15m.sdata, top = 3, bottom = 3)
+
+#plotList <- SP_cd19.15m_v_egfr.15m.gdata %>% filter(abs(Score) > 1.2) %>% select(id)
+#plotList <- SP_cd19.15m_v_egfr.15m.gdata %>% filter(id %in% c("Ifngr1", "Jak2", "Stat1", "Qa-1", "Cd19")) %>% select(id)
+
+gv2 <- sgRankView(SP_cd19.15m_v_egfr.15m.sdata, top = 0, bottom = 0, gene=goiToPlot$id) + xlim(-7, 7) + 
+  ggtitle("SP_cd19.15m_v_egfr.15m") + theme(plot.title = element_text(size = 12, face = "bold"))
+gv2
+```
+
+
+## BM_cd19.10m_v_egfr.15m
+
+```{r,fig.width=3,fig.height=2}
+#sgRankView(BM_cd19.10m_v_egfr.15m.sdata, top = 3, bottom = 3)
+
+#plotList <- BM_cd19.10m_v_egfr.15m.gdata %>% filter(abs(Score) > 1.2) %>% select(id)
+#plotList <- BM_cd19.10m_v_egfr.15m.gdata %>% arrange(id) %>% filter(id %in% c("Ifngr1", "Jak2", "Stat1", "Qa-1", "Cd19")) %>% select(id)
+gv3 <- sgRankView(BM_cd19.10m_v_egfr.15m.sdata, top = 0, bottom = 0, gene=goiToPlot$id) + xlim(-7, 7) + 
+  ggtitle("BM_cd19.10m_v_egfr.15m") + theme(plot.title = element_text(size = 12, face = "bold"))
+
+gv3
+```
+
+## BM_cd19.15m_v_egfr.15m
+
+```{r,fig.width=3,fig.height=2}
+#sgRankView(BM_cd19.15m_v_egfr.15m.sdata, top = 3, bottom = 3)
+
+#plotList <- BM_cd19.15m_v_egfr.15m.gdata %>% filter(abs(Score) > 1.2) %>% select(id)
+#plotList <- BM_cd19.15m_v_egfr.15m.gdata %>% filter(id %in% c("Ifngr1", "Jak2", "Stat1", "Qa-1", "Cd19")) %>% select(id)
+
+gv4 <- sgRankView(BM_cd19.15m_v_egfr.15m.sdata, top = 0, bottom = 0, gene=goiToPlot$id) + xlim(-7, 7) + 
+  ggtitle("BM_cd19.15m_v_egfr.15m") + theme(plot.title = element_text(size = 12, face = "bold"))
+gv4
+```
+
+## cd19_1to2_v_egfr_1to2
+
+```{r,fig.width=3,fig.height=2}
+#sgRankView(cd19_1to2_v_egfr_1to2.sdata, top = 3, bottom = 3)
+
+#plotList <- cd19_1to2_v_egfr_1to2.gdata %>% filter(abs(Score) > 1.2) %>% select(id)
+#plotList <- cd19_1to2_v_egfr_1to2.gdata %>% filter(id %in% c("Ifngr1", "Jak2", "Stat1", "Qa-1", "Cd19")) %>% select(id)
+
+gv5 <- sgRankView(cd19_1to2_v_egfr_1to2.sdata, top = 0, bottom = 0, gene=goiToPlot$id) + xlim(-7, 7) + 
+  ggtitle("cd19_1to2_v_egfr_1to2") + theme(plot.title = element_text(size = 12, face = "bold"))
+gv5
+```
+
+## cd19_1to10_v_egfr_1to10
+
+```{r,fig.width=3,fig.height=2}
+#sgRankView(cd19_1to10_v_egfr_1to10.sdata, top = 3, bottom = 3)
+
+#plotList <- cd19_1to10_v_egfr_1to10.gdata %>% filter(abs(Score) > 1.2) %>% select(id)
+#plotList <- cd19_1to10_v_egfr_1to10.gdata %>% filter(id %in% c("Ifngr1", "Jak2", "Stat1", "Qa-1", "Cd19")) %>% select(id)
+
+gv6 <- sgRankView(cd19_1to10_v_egfr_1to10.sdata, top = 0, bottom = 0, gene=goiToPlot$id) + xlim(-7, 7) + 
+  ggtitle("cd19_1to10_v_egfr_1to10") + theme(plot.title = element_text(size = 12, face = "bold"))
+gv6
+```
+
+# in vivo guides
+
+```{r, fig.width=12, fig.height=3}
+ggarrange(gv1,gv2,gv3,gv4, ncol=4, nrow=1)
+```
+
+# in vitro guides
+
+```{r, fig.width=6, fig.height=3}
+ggarrange(gv5,gv6, ncol=2, nrow=1)
+```
+
+# Comparison of mageck and YL method FCs
+
+```{r}
+SP_cd19.10m_v_egfr.15m.gdata.toMerge <- SP_cd19.10m_v_egfr.15m.gdata %>% dplyr::select(id,Score)
+colnames(SP_cd19.10m_v_egfr.15m.gdata.toMerge) <- c("Gene","SP_cd19.10m_v_egfr.15m.mageck.lfc")
+
+SP_cd19.15m_v_egfr.15m.gdata.toMerge <- SP_cd19.15m_v_egfr.15m.gdata %>% dplyr::select(id,Score)
+colnames(SP_cd19.15m_v_egfr.15m.gdata.toMerge) <- c("Gene","SP_cd19.15m_v_egfr.15m.mageck.lfc")
+
+BM_cd19.10m_v_egfr.15m.gdata.toMerge <- BM_cd19.10m_v_egfr.15m.gdata %>% dplyr::select(id,Score)
+colnames(BM_cd19.10m_v_egfr.15m.gdata.toMerge) <- c("Gene","BM_cd19.10m_v_egfr.15m.mageck.lfc")
+
+BM_cd19.15m_v_egfr.15m.gdata.toMerge <- BM_cd19.15m_v_egfr.15m.gdata %>% dplyr::select(id,Score)
+colnames(BM_cd19.15m_v_egfr.15m.gdata.toMerge) <- c("Gene","BM_cd19.15m_v_egfr.15m.mageck.lfc")
+
+cd19_1to2_v_egfr_1to2.gdata.toMerge <- cd19_1to2_v_egfr_1to2.gdata %>% dplyr::select(id,Score)
+colnames(cd19_1to2_v_egfr_1to2.gdata.toMerge) <- c("Gene","cd19_1to2_v_egfr_1to2.mageck.lfc")
+
+cd19_1to10_v_egfr_1to10.gdata.toMerge <- cd19_1to10_v_egfr_1to10.gdata %>% dplyr::select(id,Score)
+colnames(cd19_1to10_v_egfr_1to10.gdata.toMerge) <- c("Gene","cd19_1to10_v_egfr_1to10.mageck.lfc")
+
+FCcombined <- merge(x=GeneMeans,y=SP_cd19.10m_v_egfr.15m.gdata.toMerge, by.x=c("Gene"),by.y=c("Gene"), all=TRUE)
+FCcombined <- merge(x=FCcombined,y=SP_cd19.15m_v_egfr.15m.gdata.toMerge, by.x=c("Gene"),by.y=c("Gene"), all=TRUE)
+FCcombined <- merge(x=FCcombined,y=BM_cd19.10m_v_egfr.15m.gdata.toMerge, by.x=c("Gene"),by.y=c("Gene"), all=TRUE)
+FCcombined <- merge(x=FCcombined,y=BM_cd19.15m_v_egfr.15m.gdata.toMerge, by.x=c("Gene"),by.y=c("Gene"), all=TRUE)
+FCcombined <- merge(x=FCcombined,y=cd19_1to2_v_egfr_1to2.gdata.toMerge, by.x=c("Gene"),by.y=c("Gene"), all=TRUE)
+FCcombined <- merge(x=FCcombined,y=cd19_1to10_v_egfr_1to10.gdata.toMerge, by.x=c("Gene"),by.y=c("Gene"), all=TRUE)
+```
+
+## Add column to highlight genes
+
+```{r}
+toHighlight <- c('Jak2','Stat1','Ifngr1','H2-T23','Cd19')
+
+#FCcombined <- tibble::rownames_to_column(FCcombined, "Gene")
+FCcombined <- FCcombined %>% mutate(Highlight = ifelse(Gene %in% toHighlight,"Yes","No"))
+```
+
+## Plotting fold change comparisons
+
+```{r, fig.width=24,fig.height=4}
+hits <- FCcombined %>% filter(Highlight=="Yes")
+geom.text.size <- 5
+a <- FCcombined %>% ggplot(aes(x=SP_cd19.10m_v_egfr.15m.fc.Gene, y=SP_cd19.10m_v_egfr.15m.mageck.lfc))+
+  geom_point()+
+  geom_text_repel(data=hits, 
+                  aes(x=SP_cd19.10m_v_egfr.15m.fc.Gene, 
+                      y=SP_cd19.10m_v_egfr.15m.mageck.lfc,
+                      label=Gene),
+                  color = "red", size=geom.text.size)+
+  geom_abline() + xlim(-5.5,5.5) + ylim(-5.5,5.5) + ggtitle("SP_cd19.10m_v_egfr.15m") + theme(plot.title = element_text(size = 16, face = "bold"))
+
+b <- FCcombined %>% ggplot(aes(x = SP_cd19.15m_v_egfr.15m.fc.Gene, y = SP_cd19.15m_v_egfr.15m.mageck.lfc))+
+  geom_point()+
+  geom_text_repel(data=hits, 
+                  aes(x=SP_cd19.15m_v_egfr.15m.fc.Gene, 
+                      y=SP_cd19.15m_v_egfr.15m.mageck.lfc,
+                      label=Gene),
+                  color = "red", size=geom.text.size)+
+  geom_abline() + xlim(-5.5,5.5) + ylim(-5.5,5.5) + ggtitle("SP_cd19.15m_v_egfr.15m") + theme(plot.title = element_text(size = 16, face = "bold"))
+
+c <- FCcombined %>% ggplot(aes(x = BM_cd19.10m_v_egfr.15m.fc.Gene, y = BM_cd19.10m_v_egfr.15m.mageck.lfc))+
+  geom_point()+
+  geom_text_repel(data=hits, 
+                  aes(x=BM_cd19.10m_v_egfr.15m.fc.Gene, 
+                      y=BM_cd19.10m_v_egfr.15m.mageck.lfc,
+                      label=Gene),
+                  color = "red", size=geom.text.size)+
+  geom_abline() + xlim(-5.5,5.5) + ylim(-5.5,5.5) + ggtitle("BM_cd19.10m_v_egfr.15m") + theme(plot.title = element_text(size = 16, face = "bold"))
+
+d <- FCcombined %>% ggplot(aes(x = BM_cd19.15m_v_egfr.15m.fc.Gene, y = BM_cd19.15m_v_egfr.15m.mageck.lfc))+
+  geom_point()+
+  geom_text_repel(data=hits, 
+                  aes(x=BM_cd19.15m_v_egfr.15m.fc.Gene, 
+                      y=BM_cd19.15m_v_egfr.15m.mageck.lfc,
+                      label=Gene),
+                  color = "red", size=geom.text.size)+
+  geom_abline() + xlim(-5.5,5.5) + ylim(-5.5,5.5) + ggtitle("BM_cd19.15m_v_egfr.15m") + theme(plot.title = element_text(size = 16, face = "bold"))
+
+e <- FCcombined %>% ggplot(aes(x = cd19_1to2_v_egfr_1to2.fc.Gene, y = cd19_1to2_v_egfr_1to2.mageck.lfc))+
+  geom_point()+
+  geom_text_repel(data=hits, 
+                  aes(x=cd19_1to2_v_egfr_1to2.fc.Gene,
+                      y=cd19_1to2_v_egfr_1to2.mageck.lfc,
+                      label=Gene),
+                  color = "red", size=geom.text.size)+
+  geom_abline() + xlim(-5.5,5.5) + ylim(-5.5,5.5) + ggtitle("cd19_1to2_v_egfr_1to2") + theme(plot.title = element_text(size = 16, face = "bold"))
+
+f <- FCcombined %>% ggplot(aes(x = cd19_1to10_v_egfr_1to10.fc.Gene, y = cd19_1to10_v_egfr_1to10.mageck.lfc))+
+  geom_point()+
+  geom_text_repel(data=hits, 
+                  aes(x=cd19_1to10_v_egfr_1to10.fc.Gene,
+                      y=cd19_1to10_v_egfr_1to10.mageck.lfc,
+                      label=Gene),
+                  color = "red", size=geom.text.size)+
+  geom_abline() + xlim(-5.5,5.5) + ylim(-5.5,5.5) + ggtitle("cd19_1to10_v_egfr_1to10") + theme(plot.title = element_text(size = 16, face = "bold"))
+
+ggarrange(a,b,c,d,e,f, ncol=6, nrow=1)
+```
+
+# Gene-wise work
+
+## Editing sgRankView function to plot comparison name instead of gene 
+
+```{r}
+sgRankView.cw <- function(df, gene = NULL,
+                       top = 3, bottom = 3,
+                       neg_ctrl = NULL,
+                       binwidth = 0.3,
+                       interval = 0.1,
+                       bg.col = "gray90",
+                       filename = NULL,
+                       width = 5, height = 3.5,
+                       ...){
+  if(!all(c("sgrna", "Gene", "LFC") %in% colnames(df)))
+    stop("Make sure your data contains columns of 'sgrna', 'Gene', and 'LFC' ...")
+  df = as.data.frame(df, stringsAsFactors = FALSE)
+  df = df[order(df$LFC), ]
+  df$Gene = as.character(df$Gene)
+  tmp = stats::aggregate(df$LFC, by = list(df$Gene), median)
+  colnames(tmp) = c("Gene", "mid")
+  tmp = tmp[order(tmp$mid), ]
+  if(top>0){
+    idx = max((nrow(tmp)-top+1), 1)
+    gene = c(gene, tmp$Gene[idx:nrow(tmp)])
+  }
+  if(bottom>0){
+    gene = c(gene, tmp$Gene[1:min(bottom, nrow(tmp))])
+  }
+  gene = unique(gene)
+
+  subdf = df[df$Gene%in%gene, ]
+  if(nrow(subdf)<2) return(ggplot())
+  subdf$Gene = factor(subdf$Gene, levels = gene)
+  subdf = subdf[order(subdf$Gene), ]
+  subdf$index = rep(1:length(gene), as.numeric(table(subdf$Gene)[gene]))
+  subdf$yend <- (binwidth+interval)*subdf$index-interval
+  subdf$y <- (binwidth+interval)*(subdf$index-1)
+  color <- c(rep("pos",dim(subdf)[1]))
+  color[which(subdf[,3]<0)] <- "neg"
+  subdf$color <- color
+  subdf = subdf[, c("sgrna", "Gene", "LFC", "y", "yend", "color", "index")]
+
+  #set the scale of x-axis
+  a <- -Inf
+  b <- Inf
+
+  #bgcor
+  if(is.na(bg.col)){bg.col<-"white"}
+  bindex <- as.vector(sapply(seq(1,max(subdf$index),1),function(x){rep(x,4)}))
+  bgcol <- data.frame(as.vector(bindex))
+  bgcol$color <- c(rep("bg",length(bindex)))
+  colnames(bgcol)<- c("id","value")
+  bgcol$x <-  rep(c(a,b,b,a),max(subdf$index))
+  bgcol$y <-as.vector(sapply(seq(1,max(subdf$index),1), function(x){
+    c((interval + binwidth)*(x-1), (interval + binwidth)*(x-1),
+      (interval + binwidth)*x-interval,(interval + binwidth)*x-interval)
+    }))
+
+  #background
+  if(!is.null(neg_ctrl)){
+    neggene = rep(df[df$Gene %in% neg_ctrl, "Gene"], max(subdf$index))
+    negsgrna = rep(df[df$Gene %in% neg_ctrl, "sgrna"], max(subdf$index))
+    background <- data.frame(sgrna = as.vector(negsgrna), Gene = as.vector(neggene))
+    background$LFC <- rep(df[df$Gene %in% neg_ctrl,3], max(subdf$index))
+    seq <- as.vector(sapply(seq(1,max(subdf$index),1), function(x){
+      rep(x,length(df[df$Gene %in% neg_ctrl,2]))}))
+    background$y <- (binwidth+interval)*(seq-1)
+    background$yend <-(binwidth+interval)*seq-interval
+    background$color <-rep("tbg",length(neggene))
+    background$index = 0
+  }
+
+  #depict
+  cols <- c("pos"="#e41a1c","neg"="#377eb8", "tbg" = 608, "black"="black")
+  p = ggplot()
+  p = p + geom_polygon(aes_string("x", "y", fill="value", group="id"), color="gray20", data=bgcol)
+  if(!is.null(neg_ctrl))
+    p = p + geom_segment(aes_string("LFC", "y", xend = "LFC", yend = "yend", color = "color"), data = background)
+  p = p + geom_segment(aes_string("LFC", "y", xend = "LFC", yend = "yend", color = "color"), data = subdf)
+  p = p + scale_color_manual(values = cols)
+  p = p + scale_fill_manual(values = c("bg"= bg.col))
+  # p = p + scale_x_continuous(expand = c(0, 0))
+  p = p + scale_y_continuous(breaks = bgcol$y[seq(1, nrow(bgcol), 4)] + binwidth/2,
+                             labels = i, expand = c(0, 0),position = "left")
+  p = p + labs(x = "Log2(Fold change)", y = NULL)
+  p = p + theme(text = element_text(colour="black",size = 14, family = "Helvetica"),
+                plot.title = element_text(hjust = 0.5, size=18),
+                axis.text = element_text(colour="gray10"))
+  p = p + theme(axis.line = element_blank(),
+                panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
+                panel.border = element_blank(), panel.background = element_blank())
+  p = p + theme(legend.position = "none")
+
+  if(!is.null(filename)){
+    ggsave(plot=p, filename=filename, units = "in", width=width, height=height, ...)
+  }
+  return(p)
+}
+```
+
+```{r}
+goiToPlot <- as.data.frame(c("Ifngr1","Jak2","Stat1","H2-T23","Cd19"))
+colnames(goiToPlot) <- 'id'
+```
+
+```{r}
+BM_cd19.10m_v_egfr.15m.sdata$comparison <- "BM_cd19.10m_v_egfr.15m"
+BM_cd19.15m_v_egfr.15m.sdata$comparison <- "BM_cd19.15m_v_egfr.15m"
+SP_cd19.10m_v_egfr.15m.sdata$comparison <- "SP_cd19.10m_v_egfr.15m"
+SP_cd19.15m_v_egfr.15m.sdata$comparison <- "SP_cd19.15m_v_egfr.15m"
+cd19_1to10_v_egfr_1to10.sdata$comparison <- "cd19_1to10_v_egfr_1to10"
+cd19_1to2_v_egfr_1to2.sdata$comparison <- "cd19_1to2_v_egfr_1to2"
+
+MPM_21_v_RPMI_21.sdata$comparison <- "MPM_21_v_RPMI_21" 
+MPM_5_v_MPM_21.sdata$comparison <- "MPM_5_v_MPM_21"
+MPM_5_v_RPMI_5.sdata$comparison <- "MPM_5_v_RPMI_5"
+RPMI_5_v_RPMI_21.sdata$comparison <- "RPMI_5_v_RPMI_21"
+
+AR.allGuides <- rbind(BM_cd19.10m_v_egfr.15m.sdata, BM_cd19.15m_v_egfr.15m.sdata,
+                      SP_cd19.10m_v_egfr.15m.sdata,SP_cd19.15m_v_egfr.15m.sdata,
+                      cd19_1to10_v_egfr_1to10.sdata, cd19_1to2_v_egfr_1to2.sdata)
+```
+
+```{r, fig.height=4, fig.width=8}
+sample_group <- (c("BM_cd19.10m_v_egfr.15m", "BM_cd19.15m_v_egfr.15m",
+                   "SP_cd19.10m_v_egfr.15m","SP_cd19.15m_v_egfr.15m",
+                   "cd19_1to10_v_egfr_1to10","cd19_1to2_v_egfr_1to2"))
+
+goiToPlot <- as.data.frame(c("Ifngr1","Jak2","Stat1","H2-T23","Cd19"))
+colnames(goiToPlot) <- 'id'
+
+for (i in sample_group){
+  assign(paste0(i,".sgplot"),sgRankView.cw(AR.allGuides %>% filter(comparison == i), top = 0, bottom = 0, 
+                                        gene="Cd19",bg.col="white") + 
+           xlim(-7, 7) +
+           theme(axis.title=element_blank(),legend.position = "none"))
+}
+
+Multiplot <- ggarrange(BM_cd19.10m_v_egfr.15m.sgplot,BM_cd19.15m_v_egfr.15m.sgplot,
+                       SP_cd19.10m_v_egfr.15m.sgplot, SP_cd19.15m_v_egfr.15m.sgplot,
+                       cd19_1to10_v_egfr_1to10.sgplot, cd19_1to2_v_egfr_1to2.sgplot, ncol=1)
+
+sg.Cd19 <- annotate_figure(Multiplot, top = text_grob("Cd19", color = "black", face = "bold", size = 10))
+##########
+for (i in sample_group){
+  assign(paste0(i,".sgplot"),sgRankView.cw(AR.allGuides %>% filter(comparison == i), top = 0, bottom = 0, 
+                                        gene="Ifngr1",bg.col="white") + 
+           xlim(-7, 7) +
+           theme(axis.title=element_blank(),legend.position = "none"))
+}
+
+Multiplot <- ggarrange(BM_cd19.10m_v_egfr.15m.sgplot,BM_cd19.15m_v_egfr.15m.sgplot,
+                       SP_cd19.10m_v_egfr.15m.sgplot, SP_cd19.15m_v_egfr.15m.sgplot,
+                       cd19_1to10_v_egfr_1to10.sgplot, cd19_1to2_v_egfr_1to2.sgplot, ncol=1)
+
+sg.Ifngr1 <- annotate_figure(Multiplot, top = text_grob("Ifngr1", 
+               color = "black", face = "bold", size = 10))
+#########
+for (i in sample_group){
+  assign(paste0(i,".sgplot"),sgRankView.cw(AR.allGuides %>% filter(comparison == i), top = 0, bottom = 0, 
+                                        gene="Ifngr1",bg.col="white") + 
+           xlim(-7, 7) +
+           theme(axis.title=element_blank(),legend.position = "none"))
+}
+
+Multiplot <- ggarrange(BM_cd19.10m_v_egfr.15m.sgplot,BM_cd19.15m_v_egfr.15m.sgplot,
+                       SP_cd19.10m_v_egfr.15m.sgplot, SP_cd19.15m_v_egfr.15m.sgplot,
+                       cd19_1to10_v_egfr_1to10.sgplot, cd19_1to2_v_egfr_1to2.sgplot, ncol=1)
+
+sg.Ifngr1 <- annotate_figure(Multiplot, top = text_grob("Ifngr1", 
+               color = "black", face = "bold", size = 10))
+#########
+for (i in sample_group){
+  assign(paste0(i,".sgplot"),sgRankView.cw(AR.allGuides %>% filter(comparison == i), top = 0, bottom = 0, 
+                                        gene="Jak2",bg.col="white") + 
+           xlim(-7, 7) +
+           theme(axis.title=element_blank(),legend.position = "none"))
+}
+
+Multiplot <- ggarrange(BM_cd19.10m_v_egfr.15m.sgplot,BM_cd19.15m_v_egfr.15m.sgplot,
+                       SP_cd19.10m_v_egfr.15m.sgplot, SP_cd19.15m_v_egfr.15m.sgplot,
+                       cd19_1to10_v_egfr_1to10.sgplot, cd19_1to2_v_egfr_1to2.sgplot, ncol=1)
+
+sg.Jak2 <- annotate_figure(Multiplot, top = text_grob("Jak2", 
+               color = "black", face = "bold", size = 10))
+#########
+for (i in sample_group){
+  assign(paste0(i,".sgplot"),sgRankView.cw(AR.allGuides %>% filter(comparison == i), top = 0, bottom = 0, 
+                                        gene="Stat1",bg.col="white") + 
+           xlim(-7, 7) +
+           theme(axis.title=element_blank(),legend.position = "none"))
+}
+
+Multiplot <- ggarrange(BM_cd19.10m_v_egfr.15m.sgplot,BM_cd19.15m_v_egfr.15m.sgplot,
+                       SP_cd19.10m_v_egfr.15m.sgplot, SP_cd19.15m_v_egfr.15m.sgplot,
+                       cd19_1to10_v_egfr_1to10.sgplot, cd19_1to2_v_egfr_1to2.sgplot, ncol=1)
+
+sg.Stat1 <- annotate_figure(Multiplot, top = text_grob("Stat1", 
+               color = "black", face = "bold", size = 10))
+#########
+for (i in sample_group){
+  assign(paste0(i,".sgplot"),sgRankView.cw(AR.allGuides %>% filter(comparison == i), top = 0, bottom = 0, 
+                                        gene="H2-T23",bg.col="white") + 
+           xlim(-7, 7) +
+           theme(axis.title=element_blank(),legend.position = "none"))
+}
+
+Multiplot <- ggarrange(BM_cd19.10m_v_egfr.15m.sgplot,BM_cd19.15m_v_egfr.15m.sgplot,
+                       SP_cd19.10m_v_egfr.15m.sgplot, SP_cd19.15m_v_egfr.15m.sgplot,
+                       cd19_1to10_v_egfr_1to10.sgplot, cd19_1to2_v_egfr_1to2.sgplot, ncol=1)
+
+sg.H2T23 <- annotate_figure(Multiplot, top = text_grob("H2-T23", 
+               color = "black", face = "bold", size = 10))
+```
+
+```{r,fig.height=4,fig.width=20}
+ggarrange(sg.Cd19,sg.Ifngr1,sg.Jak2,sg.Stat1,sg.H2T23, ncol=5)
+```
+
+```{r, fig.height=4, fig.width=8}
+sample_group <- (c("BM_cd19.10m_v_egfr.15m", "BM_cd19.15m_v_egfr.15m",
+                   "SP_cd19.10m_v_egfr.15m","SP_cd19.15m_v_egfr.15m",
+                   "cd19_1to10_v_egfr_1to10","cd19_1to2_v_egfr_1to2"))
+
+goiToPlot <- as.data.frame(c("Ifngr1","Jak2","Stat1","H2-T23","Cd19"))
+colnames(goiToPlot) <- 'id'
+
+for (i in sample_group){
+  assign(paste0(i,".sgplot"),sgRankView.cw(AR.allGuides %>% filter(comparison == i), top = 0, bottom = 0, 
+                                        gene="Cd19",bg.col="white") + 
+           xlim(-7, 7) +
+           theme(axis.title=element_blank(),axis.text=element_blank(),legend.position = "none"))
+}
+
+Multiplot <- ggarrange(BM_cd19.10m_v_egfr.15m.sgplot,BM_cd19.15m_v_egfr.15m.sgplot,
+                       SP_cd19.10m_v_egfr.15m.sgplot, SP_cd19.15m_v_egfr.15m.sgplot,
+                       cd19_1to10_v_egfr_1to10.sgplot, cd19_1to2_v_egfr_1to2.sgplot, ncol=1)
+
+sg.Cd19 <- annotate_figure(Multiplot, top = text_grob("Cd19", color = "black", face = "bold", size = 10))
+##########
+for (i in sample_group){
+  assign(paste0(i,".sgplot"),sgRankView.cw(AR.allGuides %>% filter(comparison == i), top = 0, bottom = 0, 
+                                        gene="Ifngr1",bg.col="white") + 
+           xlim(-7, 7) +
+           theme(axis.title=element_blank(),axis.text=element_blank(),legend.position = "none"))
+}
+
+Multiplot <- ggarrange(BM_cd19.10m_v_egfr.15m.sgplot,BM_cd19.15m_v_egfr.15m.sgplot,
+                       SP_cd19.10m_v_egfr.15m.sgplot, SP_cd19.15m_v_egfr.15m.sgplot,
+                       cd19_1to10_v_egfr_1to10.sgplot, cd19_1to2_v_egfr_1to2.sgplot, ncol=1)
+
+sg.Ifngr1 <- annotate_figure(Multiplot, top = text_grob("Ifngr1", 
+               color = "black", face = "bold", size = 10))
+#########
+for (i in sample_group){
+  assign(paste0(i,".sgplot"),sgRankView.cw(AR.allGuides %>% filter(comparison == i), top = 0, bottom = 0, 
+                                        gene="Ifngr1",bg.col="white") + 
+           xlim(-7, 7) +
+           theme(axis.title=element_blank(),axis.text=element_blank(),legend.position = "none"))
+}
+
+Multiplot <- ggarrange(BM_cd19.10m_v_egfr.15m.sgplot,BM_cd19.15m_v_egfr.15m.sgplot,
+                       SP_cd19.10m_v_egfr.15m.sgplot, SP_cd19.15m_v_egfr.15m.sgplot,
+                       cd19_1to10_v_egfr_1to10.sgplot, cd19_1to2_v_egfr_1to2.sgplot, ncol=1)
+
+sg.Ifngr1 <- annotate_figure(Multiplot, top = text_grob("Ifngr1", 
+               color = "black", face = "bold", size = 10))
+#########
+for (i in sample_group){
+  assign(paste0(i,".sgplot"),sgRankView.cw(AR.allGuides %>% filter(comparison == i), top = 0, bottom = 0, 
+                                        gene="Jak2",bg.col="white") + 
+           xlim(-7, 7) +
+           theme(axis.title=element_blank(),axis.text=element_blank(),legend.position = "none"))
+}
+
+Multiplot <- ggarrange(BM_cd19.10m_v_egfr.15m.sgplot,BM_cd19.15m_v_egfr.15m.sgplot,
+                       SP_cd19.10m_v_egfr.15m.sgplot, SP_cd19.15m_v_egfr.15m.sgplot,
+                       cd19_1to10_v_egfr_1to10.sgplot, cd19_1to2_v_egfr_1to2.sgplot, ncol=1)
+
+sg.Jak2 <- annotate_figure(Multiplot, top = text_grob("Jak2", 
+               color = "black", face = "bold", size = 10))
+#########
+for (i in sample_group){
+  assign(paste0(i,".sgplot"),sgRankView.cw(AR.allGuides %>% filter(comparison == i), top = 0, bottom = 0, 
+                                        gene="Stat1",bg.col="white") + 
+           xlim(-7, 7) +
+           theme(axis.title=element_blank(),axis.text=element_blank(),legend.position = "none"))
+}
+
+Multiplot <- ggarrange(BM_cd19.10m_v_egfr.15m.sgplot,BM_cd19.15m_v_egfr.15m.sgplot,
+                       SP_cd19.10m_v_egfr.15m.sgplot, SP_cd19.15m_v_egfr.15m.sgplot,
+                       cd19_1to10_v_egfr_1to10.sgplot, cd19_1to2_v_egfr_1to2.sgplot, ncol=1)
+
+sg.Stat1 <- annotate_figure(Multiplot, top = text_grob("Stat1", 
+               color = "black", face = "bold", size = 10))
+#########
+for (i in sample_group){
+  assign(paste0(i,".sgplot"),sgRankView.cw(AR.allGuides %>% filter(comparison == i), top = 0, bottom = 0, 
+                                        gene="H2-T23",bg.col="white") + 
+           xlim(-7, 7) +
+           theme(axis.title=element_blank(),axis.text=element_blank(),legend.position = "none"))
+}
+
+Multiplot <- ggarrange(BM_cd19.10m_v_egfr.15m.sgplot,BM_cd19.15m_v_egfr.15m.sgplot,
+                       SP_cd19.10m_v_egfr.15m.sgplot, SP_cd19.15m_v_egfr.15m.sgplot,
+                       cd19_1to10_v_egfr_1to10.sgplot, cd19_1to2_v_egfr_1to2.sgplot, ncol=1)
+
+sg.H2T23 <- annotate_figure(Multiplot, top = text_grob("H2-T23", 
+               color = "black", face = "bold", size = 10))
+```
+
+```{r,fig.height=4,fig.width=16}
+ggarrange(sg.Cd19,sg.Ifngr1,sg.Jak2,sg.Stat1,sg.H2T23, ncol=5)
+```
+
+## SP_cd19.10m_v_egfr.15m
+
+```{r,fig.width=3,fig.height=2}
+#sgRankView(SP_cd19.10m_v_egfr.15m.sdata, top = 3, bottom = 3)
+
+#plotList <- SP_cd19.10m_v_egfr.15m.gdata %>% filter(abs(Score) > 1.2) %>% select(id)
+#plotList <- SP_cd19.10m_v_egfr.15m.gdata %>% filter(id %in% c("Ifngr1", "Jak2", "Stat1", "Qa-1", "Cd19")) %>% select(id)
+
+gv1 <- sgRankView(SP_cd19.10m_v_egfr.15m.sdata, top = 0, bottom = 0, gene=goiToPlot$id) + xlim(-7, 7) + 
+  ggtitle("SP_cd19.10m_v_egfr.15m") + theme(plot.title = element_text(size = 12, face = "bold"))
+gv1
+```
+
+# Violin plots of fold changes
+
+## Reading control vs Input data
+
+```{r}
+# BM_egfr.15m_v_Input1_DOI
+
+BM_egfr.15m_v_Input1_DOI.gdata <- ReadRRA("BM_egfr.15m_v_Input1_DOI.gene_summary.txt", score = c("lfc", "rra")[1])
+BM_egfr.15m_v_Input1_DOI.sdata <- ReadsgRRA("BM_egfr.15m_v_Input1_DOI.sgrna_summary.txt")
+
+BM_egfr.15m_v_Input1_DOI.gdata$negLogFDR = -log10(BM_egfr.15m_v_Input1_DOI.gdata$FDR)
+ScatterView(BM_egfr.15m_v_Input1_DOI.gdata, x = "Score", y = "negLogFDR", 
+            label = "id", model = "volcano", top = 15,
+            display_cut = TRUE, max.overlaps = Inf) + ggtitle("BM_egfr.15m_v_Input1_DOI")
+
+BM_egfr.15m_v_Input1_DOI.gdata$Rank = rank(BM_egfr.15m_v_Input1_DOI.gdata$Score)
+ScatterView(BM_egfr.15m_v_Input1_DOI.gdata, x = "Rank", y = "Score", label = "id", 
+                 top = 10, auto_cut_y = TRUE, ylab = "Log2FC",
+                 groups = c("top", "bottom"), max.overlaps = Inf) + 
+  ggtitle("BM_egfr.15m_v_Input1_DOI") + theme(plot.title = element_text(size = 12, face = "bold"))
+
+ScatterView(BM_egfr.15m_v_Input1_DOI.gdata, x = "Score", y = "Rank", label = "id", 
+            auto_cut_x = TRUE, groups = c("left", "right"), 
+            xlab = "Log2FC", top = 10, max.overlaps = Inf) + ggtitle("BM_egfr.15m_v_Input1_DOI")
+
+# SP_egfr.15m_v_Input1_DOI
+
+SP_egfr.15m_v_Input1_DOI.gdata <- ReadRRA("SP_egfr.15m_v_Input1_DOI.gene_summary.txt", score = c("lfc", "rra")[1])
+SP_egfr.15m_v_Input1_DOI.sdata <- ReadsgRRA("SP_egfr.15m_v_Input1_DOI.sgrna_summary.txt")
+
+SP_egfr.15m_v_Input1_DOI.gdata$negLogFDR = -log10(SP_egfr.15m_v_Input1_DOI.gdata$FDR)
+ScatterView(SP_egfr.15m_v_Input1_DOI.gdata, x = "Score", y = "negLogFDR", 
+            label = "id", model = "volcano", top = 15,
+            display_cut = TRUE, max.overlaps = Inf) + ggtitle("SP_egfr.15m_v_Input1_DOI")
+
+SP_egfr.15m_v_Input1_DOI.gdata$Rank = rank(SP_egfr.15m_v_Input1_DOI.gdata$Score)
+ScatterView(SP_egfr.15m_v_Input1_DOI.gdata, x = "Rank", y = "Score", label = "id", 
+                 top = 10, auto_cut_y = TRUE, ylab = "Log2FC",
+                 groups = c("top", "bottom"), max.overlaps = Inf) + 
+  ggtitle("SP_egfr.15m_v_Input1_DOI") + theme(plot.title = element_text(size = 12, face = "bold"))
+
+
+ScatterView(SP_egfr.15m_v_Input1_DOI.gdata, x = "Score", y = "Rank", label = "id", 
+            auto_cut_x = TRUE, groups = c("left", "right"), 
+            xlab = "Log2FC", top = 10, max.overlaps = Inf) + ggtitle("SP_egfr.15m_v_Input1_DOI")
+
+# egfr_1to2_v_Input1_DOI
+
+egfr_1to2_v_Input1_DOI.gdata <- ReadRRA("egfr_1to2_v_Input1_DOI.gene_summary.txt", score = c("lfc", "rra")[1])
+egfr_1to2_v_Input1_DOI.sdata <- ReadsgRRA("egfr_1to2_v_Input1_DOI.sgrna_summary.txt")
+
+egfr_1to2_v_Input1_DOI.gdata$negLogFDR = -log10(egfr_1to2_v_Input1_DOI.gdata$FDR)
+ScatterView(egfr_1to2_v_Input1_DOI.gdata, x = "Score", y = "negLogFDR", 
+            label = "id", model = "volcano", top = 15,
+            display_cut = TRUE, max.overlaps = Inf) + ggtitle("egfr_1to2_v_Input1_DOI")
+
+egfr_1to2_v_Input1_DOI.gdata$Rank = rank(egfr_1to2_v_Input1_DOI.gdata$Score)
+ScatterView(egfr_1to2_v_Input1_DOI.gdata, x = "Rank", y = "Score", label = "id", 
+                 top = 10, auto_cut_y = TRUE, ylab = "Log2FC",
+                 groups = c("top", "bottom"), max.overlaps = Inf) + 
+  ggtitle("egfr_1to2_v_Input1_DOI") + theme(plot.title = element_text(size = 12, face = "bold"))
+
+
+ScatterView(egfr_1to2_v_Input1_DOI.gdata, x = "Score", y = "Rank", label = "id", 
+            auto_cut_x = TRUE, groups = c("left", "right"), 
+            xlab = "Log2FC", top = 10, max.overlaps = Inf) + ggtitle("egfr_1to2_v_Input1_DOI")
+
+# egfr_1to10_v_Input1_DOI
+
+egfr_1to10_v_Input1_DOI.gdata <- ReadRRA("egfr_1to10_v_Input1_DOI.gene_summary.txt", score = c("lfc", "rra")[1])
+egfr_1to10_v_Input1_DOI.sdata <- ReadsgRRA("egfr_1to10_v_Input1_DOI.sgrna_summary.txt")
+
+egfr_1to10_v_Input1_DOI.gdata$negLogFDR = -log10(egfr_1to10_v_Input1_DOI.gdata$FDR)
+ScatterView(egfr_1to10_v_Input1_DOI.gdata, x = "Score", y = "negLogFDR", 
+            label = "id", model = "volcano", top = 15,
+            display_cut = TRUE, max.overlaps = Inf) + ggtitle("egfr_1to10_v_Input1_DOI")
+
+egfr_1to10_v_Input1_DOI.gdata$Rank = rank(egfr_1to10_v_Input1_DOI.gdata$Score)
+ScatterView(egfr_1to10_v_Input1_DOI.gdata, x = "Rank", y = "Score", label = "id", 
+                 top = 10, auto_cut_y = TRUE, ylab = "Log2FC",
+                 groups = c("top", "bottom"), max.overlaps = Inf) + 
+  ggtitle("egfr_1to10_v_Input1_DOI") + theme(plot.title = element_text(size = 12, face = "bold"))
+
+
+ScatterView(egfr_1to10_v_Input1_DOI.gdata, x = "Score", y = "Rank", label = "id", 
+            auto_cut_x = TRUE, groups = c("left", "right"), 
+            xlab = "Log2FC", top = 10, max.overlaps = Inf) + ggtitle("egfr_1to10_v_Input1_DOI")
+```
+
+## Reading cd19 vs Input data
+
+```{r}
+# BM_cd19.15m_v_Input1_DOI
+
+BM_cd19.15m_v_Input1_DOI.gdata <- ReadRRA("BM_cd19.15m_v_egfr.15m.gene_summary.txt", score = c("lfc", "rra")[1])
+BM_cd19.15m_v_Input1_DOI.sdata <- ReadsgRRA("BM_cd19.15m_v_Input1_DOI.sgrna_summary.txt")
+
+BM_cd19.15m_v_Input1_DOI.gdata$negLogFDR = -log10(BM_cd19.15m_v_Input1_DOI.gdata$FDR)
+ScatterView(BM_cd19.15m_v_Input1_DOI.gdata, x = "Score", y = "negLogFDR", 
+            label = "id", model = "volcano", top = 15,
+            display_cut = TRUE, max.overlaps = Inf) + ggtitle("BM_cd19.15m_v_Input1_DOI")
+
+BM_cd19.15m_v_Input1_DOI.gdata$Rank = rank(BM_cd19.15m_v_Input1_DOI.gdata$Score)
+ScatterView(BM_cd19.15m_v_Input1_DOI.gdata, x = "Rank", y = "Score", label = "id", 
+                 top = 10, auto_cut_y = TRUE, ylab = "Log2FC",
+                 groups = c("top", "bottom"), max.overlaps = Inf) + 
+  ggtitle("BM_cd19.15m_v_Input1_DOI") + theme(plot.title = element_text(size = 12, face = "bold"))
+
+ScatterView(BM_cd19.15m_v_Input1_DOI.gdata, x = "Score", y = "Rank", label = "id", 
+            auto_cut_x = TRUE, groups = c("left", "right"), 
+            xlab = "Log2FC", top = 10, max.overlaps = Inf) + ggtitle("BM_cd19.15m_v_Input1_DOI")
+
+# BM_cd19.10m_v_Input1_DOI
+
+BM_cd19.10m_v_Input1_DOI.gdata <- ReadRRA("BM_cd19.10m_v_egfr.15m.gene_summary.txt", score = c("lfc", "rra")[1])
+BM_cd19.10m_v_Input1_DOI.sdata <- ReadsgRRA("BM_cd19.10m_v_Input1_DOI.sgrna_summary.txt")
+
+BM_cd19.10m_v_Input1_DOI.gdata$negLogFDR = -log10(BM_cd19.10m_v_Input1_DOI.gdata$FDR)
+ScatterView(BM_cd19.10m_v_Input1_DOI.gdata, x = "Score", y = "negLogFDR", 
+            label = "id", model = "volcano", top = 15,
+            display_cut = TRUE, max.overlaps = Inf) + ggtitle("BM_cd19.10m_v_Input1_DOI")
+
+BM_cd19.10m_v_Input1_DOI.gdata$Rank = rank(BM_cd19.10m_v_Input1_DOI.gdata$Score)
+ScatterView(BM_cd19.10m_v_Input1_DOI.gdata, x = "Rank", y = "Score", label = "id", 
+                 top = 10, auto_cut_y = TRUE, ylab = "Log2FC",
+                 groups = c("top", "bottom"), max.overlaps = Inf) + 
+  ggtitle("BM_cd19.10m_v_Input1_DOI") + theme(plot.title = element_text(size = 12, face = "bold"))
+
+ScatterView(BM_cd19.10m_v_Input1_DOI.gdata, x = "Score", y = "Rank", label = "id", 
+            auto_cut_x = TRUE, groups = c("left", "right"), 
+            xlab = "Log2FC", top = 10, max.overlaps = Inf) + ggtitle("BM_cd19.10m_v_Input1_DOI")
+
+# SP_cd19.15m_v_Input1_DOI
+
+SP_cd19.15m_v_Input1_DOI.gdata <- ReadRRA("SP_cd19.15m_v_egfr.15m.gene_summary.txt", score = c("lfc", "rra")[1])
+SP_cd19.15m_v_Input1_DOI.sdata <- ReadsgRRA("SP_cd19.15m_v_Input1_DOI.sgrna_summary.txt")
+
+SP_cd19.15m_v_Input1_DOI.gdata$negLogFDR = -log10(SP_cd19.15m_v_Input1_DOI.gdata$FDR)
+ScatterView(SP_cd19.15m_v_Input1_DOI.gdata, x = "Score", y = "negLogFDR", 
+            label = "id", model = "volcano", top = 15,
+            display_cut = TRUE, max.overlaps = Inf) + ggtitle("SP_cd19.15m_v_Input1_DOI")
+
+SP_cd19.15m_v_Input1_DOI.gdata$Rank = rank(SP_cd19.15m_v_Input1_DOI.gdata$Score)
+ScatterView(SP_cd19.15m_v_Input1_DOI.gdata, x = "Rank", y = "Score", label = "id", 
+                 top = 10, auto_cut_y = TRUE, ylab = "Log2FC",
+                 groups = c("top", "bottom"), max.overlaps = Inf) + 
+  ggtitle("SP_cd19.15m_v_Input1_DOI") + theme(plot.title = element_text(size = 12, face = "bold"))
+
+ScatterView(SP_cd19.15m_v_Input1_DOI.gdata, x = "Score", y = "Rank", label = "id", 
+            auto_cut_x = TRUE, groups = c("left", "right"), 
+            xlab = "Log2FC", top = 10, max.overlaps = Inf) + ggtitle("SP_cd19.15m_v_Input1_DOI")
+
+# SP_cd19.10m_v_Input1_DOI
+
+SP_cd19.10m_v_Input1_DOI.gdata <- ReadRRA("SP_cd19.10m_v_egfr.15m.gene_summary.txt", score = c("lfc", "rra")[1])
+SP_cd19.10m_v_Input1_DOI.sdata <- ReadsgRRA("SP_cd19.10m_v_Input1_DOI.sgrna_summary.txt")
+
+SP_cd19.10m_v_Input1_DOI.gdata$negLogFDR = -log10(SP_cd19.10m_v_Input1_DOI.gdata$FDR)
+ScatterView(SP_cd19.10m_v_Input1_DOI.gdata, x = "Score", y = "negLogFDR", 
+            label = "id", model = "volcano", top = 15,
+            display_cut = TRUE, max.overlaps = Inf) + ggtitle("SP_cd19.10m_v_Input1_DOI")
+
+SP_cd19.10m_v_Input1_DOI.gdata$Rank = rank(SP_cd19.10m_v_Input1_DOI.gdata$Score)
+ScatterView(SP_cd19.10m_v_Input1_DOI.gdata, x = "Rank", y = "Score", label = "id", 
+                 top = 10, auto_cut_y = TRUE, ylab = "Log2FC",
+                 groups = c("top", "bottom"), max.overlaps = Inf) + 
+  ggtitle("SP_cd19.10m_v_Input1_DOI") + theme(plot.title = element_text(size = 12, face = "bold"))
+
+ScatterView(SP_cd19.10m_v_Input1_DOI.gdata, x = "Score", y = "Rank", label = "id", 
+            auto_cut_x = TRUE, groups = c("left", "right"), 
+            xlab = "Log2FC", top = 10, max.overlaps = Inf) + ggtitle("SP_cd19.10m_v_Input1_DOI")
+```
+
+# Gene-level for vsDOI Vln plots
+
+## Import essential gene list
+
+```{r}
+essentialGenes <- read_xlsx("essential_genes_combined_mouseSyms.xlsx")
+```
+
+## Assemble gene-level 
+
+```{r}
+egfr_1to10_v_Input1_DOI.gdata$comparison <- "egfr_1to10_v_Input1_DOI"
+egfr_1to2_v_Input1_DOI.gdata$comparison <- "egfr_1to2_v_Input1_DOI"
+BM_egfr.15m_v_Input1_DOI.gdata$comparison <- "BM_egfr.15m_v_Input1_DOI"
+SP_egfr.15m_v_Input1_DOI.gdata$comparison <- "SP_egfr.15m_v_Input1_DOI"
+BM_cd19.10m_v_Input1_DOI.gdata$comparison <- "BM_cd19.10m_v_Input1_DOI"
+BM_cd19.15m_v_Input1_DOI.gdata$comparison <- "BM_cd19.15m_v_Input1_DOI"
+SP_cd19.10m_v_Input1_DOI.gdata$comparison <- "SP_cd19.10m_v_Input1_DOI"
+SP_cd19.15m_v_Input1_DOI.gdata$comparison <- "SP_cd19.15m_v_Input1_DOI"
+
+AR.DOI.genes <- rbind(egfr_1to10_v_Input1_DOI.gdata,
+                      egfr_1to2_v_Input1_DOI.gdata,
+                      BM_egfr.15m_v_Input1_DOI.gdata,
+                      SP_egfr.15m_v_Input1_DOI.gdata,
+                      BM_cd19.10m_v_Input1_DOI.gdata,
+                      BM_cd19.15m_v_Input1_DOI.gdata,
+                      SP_cd19.10m_v_Input1_DOI.gdata,
+                      SP_cd19.15m_v_Input1_DOI.gdata)
+
+AR.DOI.genes <- merge(x=AR.DOI.genes,y=essentialGenes, by.x=c("id"),by.y=c("MGISym"), all.x=TRUE)
+AR.DOI.genes$Essential <- AR.DOI.genes$Essential %>% replace_na("No")
+```
+
+## Write gene-level vsDOI data
+
+```{r}
+write.xlsx(AR.DOI.genes, file="AR.vsDOI.genes.xlsx")
+```
+
+```{r,fig.height=4,fig.width=3}
+p1 <- ggplot(AR.DOI.genes %>% filter(comparison == "egfr_1to10_v_Input1_DOI"), aes(factor(Essential), Score))
+p1 <- p1 + geom_violin(fill='#A4A4A4') + geom_boxplot(width=.1) + ggtitle("egfr_1to10_v_DOI") + theme_bw()
+p1
+
+p2 <- ggplot(AR.DOI.genes %>% filter(comparison == "egfr_1to2_v_Input1_DOI"), aes(factor(Essential), Score))
+p2 <- p2 + geom_violin(fill='#A4A4A4') + geom_boxplot(width=.1) + ggtitle("egfr_1to2_v_DOI") + theme_bw()
+p2
+
+p3 <- ggplot(AR.DOI.genes %>% filter(comparison == "BM_egfr.15m_v_Input1_DOI"), aes(factor(Essential), Score))
+p3 <- p3 + geom_violin(fill='#A4A4A4') + geom_boxplot(width=.1) + ggtitle("BM_egfr.15m_v_DOI") + theme_bw()
+p3
+
+p4 <- ggplot(AR.DOI.genes %>% filter(comparison == "SP_egfr.15m_v_Input1_DOI"), aes(factor(Essential), Score))
+p4 <- p4 + geom_violin(fill='#A4A4A4') + geom_boxplot(width=.1) + ggtitle("SP_egfr.15m_v_DOI") + theme_bw()
+p4
+
+p5 <- ggplot(AR.DOI.genes %>% filter(comparison == "SP_cd19.15m_v_Input1_DOI"), aes(factor(Essential), Score))
+p5 <- p5 + geom_violin(fill='#A4A4A4') + geom_boxplot(width=.1) + ggtitle("SP_cd19.15m_v_DOI") + theme_bw()
+p5
+
+p6 <- ggplot(AR.DOI.genes %>% filter(comparison == "SP_cd19.10m_v_Input1_DOI"), aes(factor(Essential), Score))
+p6 <- p6 + geom_violin(fill='#A4A4A4') + geom_boxplot(width=.1) + ggtitle("SP_cd19.10m_v_DOI") + theme_bw()
+p6
+
+p7 <- ggplot(AR.DOI.genes %>% filter(comparison == "BM_cd19.15m_v_Input1_DOI"), aes(factor(Essential), Score))
+p7 <- p7 + geom_violin(fill='#A4A4A4') + geom_boxplot(width=.1) + ggtitle("BM_cd19.15m_v_DOI") + theme_bw()
+p7
+
+p8 <- ggplot(AR.DOI.genes %>% filter(comparison == "BM_cd19.10m_v_Input1_DOI"), aes(factor(Essential), Score))
+p8 <- p8 + geom_violin(fill='#A4A4A4') + geom_boxplot(width=.1) + ggtitle("BM_cd19.10m_v_DOI") + theme_bw()
+p8
+```
+
+## Arrange final plots
+
+```{r,fig.height=6,fig.width=6}
+ggarrange(p1,p2,p3,p4, ncol=2,nrow=2)
+ggarrange(p5,p6,p7,p8, ncol=2,nrow=2)
+```
+
+## gene level T-tests of the difference between Yes/No essentiality groups
+
+```{r}
+table(AR.DOI.genes$comparison)
+egfr_1to10 <- AR.DOI.genes %>% filter(comparison == "egfr_1to10_v_Input1_DOI")
+t.test(Score~Essential,data=egfr_1to10)
+
+egfr_1to2 <- AR.DOI.genes %>% filter(comparison == "egfr_1to2_v_Input1_DOI")
+t.test(Score~Essential,data=egfr_1to2)
+
+BM.egf <- AR.DOI.genes %>% filter(comparison == "BM_egfr.15m_v_Input1_DOI")
+t.test(Score~Essential,data=BM.egf)
+
+SP.egf <- AR.DOI.genes %>% filter(comparison == "SP_egfr.15m_v_Input1_DOI")
+t.test(Score~Essential,data=SP.egf)
+
+SP.cd19.10 <- AR.DOI.genes %>% filter(comparison == "SP_cd19.10m_v_Input1_DOI")
+t.test(Score~Essential,data=SP.cd19.10)
+
+SP.cd19.15 <- AR.DOI.genes %>% filter(comparison == "SP_cd19.15m_v_Input1_DOI")
+t.test(Score~Essential,data=SP.cd19.15)
+
+BM.cd19.10 <- AR.DOI.genes %>% filter(comparison == "BM_cd19.10m_v_Input1_DOI")
+t.test(Score~Essential,data=BM.cd19.10)
+
+BM.cd19.15 <- AR.DOI.genes %>% filter(comparison == "BM_cd19.15m_v_Input1_DOI")
+t.test(Score~Essential,data=BM.cd19.15)
+```
+
+# Guide-level for vsDOI Vln plots
+
+```{r}
+Guide.annotations <- read_xlsx("GuideAnnotations2.xlsx")
+```
+
+```{r}
+egfr_1to10_v_Input1_DOI.sdata$comparison <- "egfr_1to10_v_Input1_DOI"
+egfr_1to2_v_Input1_DOI.sdata$comparison <- "egfr_1to2_v_Input1_DOI"
+BM_egfr.15m_v_Input1_DOI.sdata$comparison <- "BM_egfr.15m_v_Input1_DOI"
+SP_egfr.15m_v_Input1_DOI.sdata$comparison <- "SP_egfr.15m_v_Input1_DOI"
+BM_cd19.10m_v_Input1_DOI.sdata$comparison <- "BM_cd19.10m_v_Input1_DOI"
+BM_cd19.15m_v_Input1_DOI.sdata$comparison <- "BM_cd19.15m_v_Input1_DOI"
+SP_cd19.10m_v_Input1_DOI.sdata$comparison <- "SP_cd19.10m_v_Input1_DOI"
+SP_cd19.15m_v_Input1_DOI.sdata$comparison <- "SP_cd19.15m_v_Input1_DOI"
+
+AR.DOI.guides <- rbind(egfr_1to10_v_Input1_DOI.sdata,
+                      egfr_1to2_v_Input1_DOI.sdata,
+                      BM_egfr.15m_v_Input1_DOI.sdata,
+                      SP_egfr.15m_v_Input1_DOI.sdata,
+                      BM_cd19.10m_v_Input1_DOI.sdata,
+                      BM_cd19.15m_v_Input1_DOI.sdata,
+                      SP_cd19.10m_v_Input1_DOI.sdata,
+                      SP_cd19.15m_v_Input1_DOI.sdata)
+
+AR.DOI.guides <- merge(x=AR.DOI.guides,y=Guide.annotations, by.x=c("sgrna"),by.y=c("ConstructID"), all.x=TRUE)
+```
+
+## Write guide-level vs DOI data
+
+```{r}
+write.xlsx(AR.DOI.guides, file="AR.vsDOI.guides.xlsx")
+```
+
+```{r,fig.height=4,fig.width=3}
+p1 <- ggplot(AR.DOI.guides %>% filter(comparison == "egfr_1to10_v_Input1_DOI"), aes(factor(Essential), LFC))
+p1 <- p1 + geom_violin(fill='#A4A4A4') + geom_boxplot(width=.1) + ggtitle("egfr_1to10_v_DOI") + theme_bw()
+p1
+
+p2 <- ggplot(AR.DOI.guides %>% filter(comparison == "egfr_1to2_v_Input1_DOI"), aes(factor(Essential), LFC))
+p2 <- p2 + geom_violin(fill='#A4A4A4') + geom_boxplot(width=.1) + ggtitle("egfr_1to2_v_DOI") + theme_bw()
+p2
+
+p3 <- ggplot(AR.DOI.guides %>% filter(comparison == "BM_egfr.15m_v_Input1_DOI"), aes(factor(Essential), LFC))
+p3 <- p3 + geom_violin(fill='#A4A4A4') + geom_boxplot(width=.1) + ggtitle("BM_egfr.15m_v_DOI") + theme_bw()
+p3
+
+p4 <- ggplot(AR.DOI.guides %>% filter(comparison == "SP_egfr.15m_v_Input1_DOI"), aes(factor(Essential), LFC))
+p4 <- p4 + geom_violin(fill='#A4A4A4') + geom_boxplot(width=.1) + ggtitle("SP_egfr.15m_v_DOI") + theme_bw()
+p4
+
+p5 <- ggplot(AR.DOI.guides %>% filter(comparison == "SP_cd19.15m_v_Input1_DOI"), aes(factor(Essential), LFC))
+p5 <- p5 + geom_violin(fill='#A4A4A4') + geom_boxplot(width=.1) + ggtitle("SP_cd19.15m_v_DOI") + theme_bw()
+p5
+
+p6 <- ggplot(AR.DOI.guides %>% filter(comparison == "SP_cd19.10m_v_Input1_DOI"), aes(factor(Essential), LFC))
+p6 <- p6 + geom_violin(fill='#A4A4A4') + geom_boxplot(width=.1) + ggtitle("SP_cd19.10m_v_DOI") + theme_bw()
+p6
+
+p7 <- ggplot(AR.DOI.guides %>% filter(comparison == "BM_cd19.15m_v_Input1_DOI"), aes(factor(Essential), LFC))
+p7 <- p7 + geom_violin(fill='#A4A4A4') + geom_boxplot(width=.1) + ggtitle("BM_cd19.15m_v_DOI") + theme_bw()
+p7
+
+p8 <- ggplot(AR.DOI.guides %>% filter(comparison == "BM_cd19.10m_v_Input1_DOI"), aes(factor(Essential), LFC))
+p8 <- p8 + geom_violin(fill='#A4A4A4') + geom_boxplot(width=.1) + ggtitle("BM_cd19.10m_v_DOI") + theme_bw()
+p8
+```
+
+## Arrange final plots
+
+```{r,fig.height=6,fig.width=6}
+ggarrange(p1,p2,p3,p4, ncol=2,nrow=2)
+ggarrange(p5,p6,p7,p8, ncol=2,nrow=2)
+```
+
+## guide level T-tests of the difference between Yes/No essentiality groups
+
+```{r}
+table(AR.DOI.guides$comparison)
+egfr_1to10 <- AR.DOI.guides %>% filter(comparison == "egfr_1to10_v_Input1_DOI")
+t.test(LFC~Essential,data=egfr_1to10)
+
+egfr_1to2 <- AR.DOI.guides %>% filter(comparison == "egfr_1to2_v_Input1_DOI")
+t.test(LFC~Essential,data=egfr_1to2)
+
+BM.egf <- AR.DOI.guides %>% filter(comparison == "BM_egfr.15m_v_Input1_DOI")
+t.test(LFC~Essential,data=BM.egf)
+
+SP.egf <- AR.DOI.guides %>% filter(comparison == "SP_egfr.15m_v_Input1_DOI")
+t.test(LFC~Essential,data=SP.egf)
+
+SP.cd19.10 <- AR.DOI.guides %>% filter(comparison == "SP_cd19.10m_v_Input1_DOI")
+t.test(LFC~Essential,data=SP.cd19.10)
+
+SP.cd19.15 <- AR.DOI.guides %>% filter(comparison == "SP_cd19.15m_v_Input1_DOI")
+t.test(LFC~Essential,data=SP.cd19.15)
+
+BM.cd19.10 <- AR.DOI.guides %>% filter(comparison == "BM_cd19.10m_v_Input1_DOI")
+t.test(LFC~Essential,data=BM.cd19.10)
+
+BM.cd19.15 <- AR.DOI.guides %>% filter(comparison == "BM_cd19.15m_v_Input1_DOI")
+t.test(LFC~Essential,data=BM.cd19.15)
+```
+
+```{r,fig.height=4,fig.width=6}
+testColumn <- c("Essential")
+
+p1 <- ggplot(AR.DOI.guides %>% filter(comparison == "egfr_1to10_v_Input1_DOI"), aes(factor(paste0(CategoryEdit2,Essential)), LFC))
+p1 <- p1 + geom_violin(fill='#A4A4A4') + geom_boxplot(width=.1) + ggtitle("egfr_1to10_v_DOI") + theme_bw()
+p1
+
+p2 <- ggplot(AR.DOI.guides %>% filter(comparison == "egfr_1to2_v_Input1_DOI"), aes(factor(paste0(CategoryEdit2,Essential)), LFC))
+p2 <- p2 + geom_violin(fill='#A4A4A4') + geom_boxplot(width=.1) + ggtitle("egfr_1to2_v_DOI") + theme_bw()
+p2
+
+p3 <- ggplot(AR.DOI.guides %>% filter(comparison == "BM_egfr.15m_v_Input1_DOI"), aes(factor(paste0(CategoryEdit2,Essential)), LFC))
+p3 <- p3 + geom_violin(fill='#A4A4A4') + geom_boxplot(width=.1) + ggtitle("BM_egfr.15m_v_DOI") + theme_bw()
+p3
+
+p4 <- ggplot(AR.DOI.guides %>% filter(comparison == "SP_egfr.15m_v_Input1_DOI"), aes(factor(paste0(CategoryEdit2,Essential)), LFC))
+p4 <- p4 + geom_violin(fill='#A4A4A4') + geom_boxplot(width=.1) + ggtitle("SP_egfr.15m_v_DOI") + theme_bw()
+p4
+```
+
+## Arrange final plots
+
+```{r,fig.height=8,fig.width=12}
+ggarrange(p1,p2,p3,p4, ncol=2,nrow=2)
+```
+
+# Functional Annotation work
+
+```{r}
+BM_cd19.10m_v_egfr.15m.degs <- BM_cd19.10m_v_egfr.15m.gdata %>% filter(FDR <= 0.05 & Score >= 1) %>% dplyr::select(c("id"))
+BM_cd19.10m_v_egfr.15m.bkground <- BM_cd19.10m_v_egfr.15m.gdata %>% dplyr::select(c("id"))
+
+write.xlsx(BM_cd19.10m_v_egfr.15m.gdata,file="BM_cd19.10m_v_egfr.15m.xlsx", overwrite = TRUE, rowNames=TRUE)
+write.table(BM_cd19.10m_v_egfr.15m.degs, file="degs.txt",col.names = FALSE, row.names=FALSE, quote=FALSE)
+write.table(BM_cd19.10m_v_egfr.15m.bkground, file="bkground.txt",col.names = FALSE, row.names=FALSE, quote=FALSE)
+
+
+BM_cd19.10m_v_egfr.15m.results <- gost(query = BM_cd19.10m_v_egfr.15m.degs$id,organism = "mmusculus", 
+                sources = c("GO:BP", "GO:MF", "GO:CC", "KEGG", "REAC", "WP"),
+                significant = FALSE, correction_method ="g_SCS",
+                custom_bg = BM_cd19.10m_v_egfr.15m.bkground$id, domain_scope="custom")
+
+BM_cd19.10m_v_egfr.15m.results$result %>% dplyr::select(c("term_name","source","p_value", "query_size", "intersection_size"))
+```
+```{r}
+BM_cd19.15m_v_egfr.15m.degs <- BM_cd19.15m_v_egfr.15m.gdata %>% filter(FDR <= 0.05 & abs(Score) >= 1) %>% dplyr::select(c("id"))
+BM_cd19.15m_v_egfr.15m.bkground <- BM_cd19.15m_v_egfr.15m.gdata %>% dplyr::select(c("id"))
+
+write.xlsx(BM_cd19.15m_v_egfr.15m.gdata,file="BM_cd19.15m_v_egfr.15m.xlsx", overwrite = TRUE, rowNames=TRUE)
+write.table(BM_cd19.15m_v_egfr.15m.degs, file="degs.txt",col.names = FALSE, row.names=FALSE, quote=FALSE)
+write.table(BM_cd19.15m_v_egfr.15m.bkground, file="bkground.txt",col.names = FALSE, row.names=FALSE, quote=FALSE)
+
+BM_cd19.15m_v_egfr.15m.results <- gost(query = BM_cd19.15m_v_egfr.15m.degs$id,organism = "mmusculus", 
+                sources = c("GO:BP", "GO:MF", "GO:CC", "KEGG", "REAC", "WP"),
+                significant = FALSE, correction_method ="g_SCS",
+                custom_bg = BM_cd19.15m_v_egfr.15m.bkground$id, domain_scope="custom")
+
+BM_cd19.15m_v_egfr.15m.results$result %>% dplyr::select(c("term_name","source","p_value", "query_size", "intersection_size"))
+```
+
+```{r}
+SP_cd19.10m_v_egfr.15m.degs <- SP_cd19.10m_v_egfr.15m.gdata %>% filter(FDR <= 0.05 & abs(Score) >= 1) %>% dplyr::select(c("id"))
+SP_cd19.10m_v_egfr.15m.bkground <- SP_cd19.10m_v_egfr.15m.gdata %>% dplyr::select(c("id"))
+
+write.xlsx(SP_cd19.10m_v_egfr.15m.gdata,file="SP_cd19.10m_v_egfr.15m.xlsx", overwrite = TRUE, rowNames=TRUE)
+write.table(SP_cd19.10m_v_egfr.15m.degs, file="degs.txt",col.names = FALSE, row.names=FALSE, quote=FALSE)
+write.table(SP_cd19.10m_v_egfr.15m.bkground, file="bkground.txt",col.names = FALSE, row.names=FALSE, quote=FALSE)
+
+SP_cd19.10m_v_egfr.15m.results <- gost(query = SP_cd19.10m_v_egfr.15m.degs$id,organism = "mmusculus", 
+                sources = c("GO:BP", "GO:MF", "GO:CC", "KEGG", "REAC", "WP"),
+                significant = FALSE, correction_method ="g_SCS",
+                custom_bg = SP_cd19.10m_v_egfr.15m.bkground$id, domain_scope="custom")
+
+SP_cd19.10m_v_egfr.15m.results$result %>% dplyr::select(c("term_name","source","p_value", "query_size", "intersection_size"))
+```
+
+```{r}
+SP_cd19.15m_v_egfr.15m.degs <- SP_cd19.15m_v_egfr.15m.gdata %>% filter(FDR <= 0.05 & abs(Score) >= 1) %>% dplyr::select(c("id"))
+SP_cd19.15m_v_egfr.15m.bkground <- SP_cd19.15m_v_egfr.15m.gdata %>% dplyr::select(c("id"))
+
+write.xlsx(SP_cd19.15m_v_egfr.15m.gdata,file="SP_cd19.15m_v_egfr.15m.xlsx", overwrite = TRUE, rowNames=TRUE)
+write.table(SP_cd19.15m_v_egfr.15m.degs, file="degs.txt",col.names = FALSE, row.names=FALSE, quote=FALSE)
+write.table(SP_cd19.15m_v_egfr.15m.bkground, file="bkground.txt",col.names = FALSE, row.names=FALSE, quote=FALSE)
+
+SP_cd19.15m_v_egfr.15m.results <- gost(query = SP_cd19.15m_v_egfr.15m.degs$id,organism = "mmusculus", 
+                sources = c("GO:BP", "GO:MF", "GO:CC", "KEGG", "REAC", "WP"),
+                significant = FALSE, correction_method ="g_SCS",
+                custom_bg = SP_cd19.15m_v_egfr.15m.bkground$id, domain_scope="custom")
+
+SP_cd19.15m_v_egfr.15m.results$result %>% dplyr::select(c("term_name","source","p_value", "query_size", "intersection_size"))
+```
+
+```{r}
+cd19_1to2_v_egfr_1to2.degs <- cd19_1to2_v_egfr_1to2.gdata %>% filter(FDR <= 0.05 & abs(Score) >= 1) %>% dplyr::select(c("id"))
+
+cd19_1to2_v_egfr_1to2.bkground <- cd19_1to2_v_egfr_1to2.gdata %>% dplyr::select(c("id"))
+
+cd19_1to2_v_egfr_1to2.results <- gost(query = cd19_1to2_v_egfr_1to2.degs$id,organism = "mmusculus", 
+                sources = c("GO:BP", "GO:MF", "GO:CC", "KEGG", "REAC", "WP"),
+                significant = TRUE, correction_method ="g_SCS",
+                custom_bg = cd19_1to2_v_egfr_1to2.bkground$id, domain_scope="custom")
+
+cd19_1to2_v_egfr_1to2.results$result %>% dplyr::select(c("term_name","source","p_value", "query_size", "intersection_size"))
+```
+
+```{r}
+cd19_1to10_v_egfr_1to10.degs <- cd19_1to10_v_egfr_1to10.gdata %>% filter(FDR <= 0.05 & abs(Score) >= 1) %>% dplyr::select(c("id"))
+
+cd19_1to10_v_egfr_1to10.bkground <- cd19_1to10_v_egfr_1to10.gdata %>% dplyr::select(c("id"))
+
+cd19_1to10_v_egfr_1to10.results <- gost(query = cd19_1to10_v_egfr_1to10.degs$id,organism = "mmusculus", 
+                sources = c("GO:BP", "GO:MF", "GO:CC", "KEGG", "REAC", "WP"),
+                significant = TRUE, correction_method ="g_SCS",
+                custom_bg = cd19_1to10_v_egfr_1to10.bkground$id, domain_scope="custom")
+
+cd19_1to10_v_egfr_1to10.results$result %>% dplyr::select(c("term_name","source","p_value", "query_size", "intersection_size"))
+```
+
+# Merging for upload to functional annotation tools
+
+```{r}
+SP_cd19.10m_v_egfr.15m.gdata.toMerge2 <- SP_cd19.10m_v_egfr.15m.gdata %>% dplyr::select(id,Score,FDR)
+colnames(SP_cd19.10m_v_egfr.15m.gdata.toMerge2) <- c("Gene","SP_cd19.10m_v_egfr.15m.mageck.lfc","SP_cd19.10m_v_egfr.15m.mageck.fdr")
+
+SP_cd19.15m_v_egfr.15m.gdata.toMerge2 <- SP_cd19.15m_v_egfr.15m.gdata %>% dplyr::select(id,Score,FDR)
+colnames(SP_cd19.15m_v_egfr.15m.gdata.toMerge2) <- c("Gene","SP_cd19.15m_v_egfr.15m.mageck.lfc","SP_cd19.15m_v_egfr.15m.mageck.fdr")
+
+BM_cd19.10m_v_egfr.15m.gdata.toMerge2 <- BM_cd19.10m_v_egfr.15m.gdata %>% dplyr::select(id,Score,FDR)
+colnames(BM_cd19.10m_v_egfr.15m.gdata.toMerge2) <- c("Gene","BM_cd19.10m_v_egfr.15m.mageck.lfc","BM_cd19.10m_v_egfr.15m.mageck.fdr")
+
+BM_cd19.15m_v_egfr.15m.gdata.toMerge2 <- BM_cd19.15m_v_egfr.15m.gdata %>% dplyr::select(id,Score,FDR)
+colnames(BM_cd19.15m_v_egfr.15m.gdata.toMerge2) <- c("Gene","BM_cd19.15m_v_egfr.15m.mageck.lfc","BM_cd19.15m_v_egfr.15m.mageck.fdr")
+
+cd19_1to2_v_egfr_1to2.gdata.toMerge2 <- cd19_1to2_v_egfr_1to2.gdata %>% dplyr::select(id,Score,FDR)
+colnames(cd19_1to2_v_egfr_1to2.gdata.toMerge2) <- c("Gene","cd19_1to2_v_egfr_1to2.mageck.lfc","cd19_1to2_v_egfr_1to2.mageck.fdr")
+
+cd19_1to10_v_egfr_1to10.gdata.toMerge2 <- cd19_1to10_v_egfr_1to10.gdata %>% dplyr::select(id,Score,FDR)
+colnames(cd19_1to10_v_egfr_1to10.gdata.toMerge2) <- c("Gene","cd19_1to10_v_egfr_1to10.mageck.lfc","cd19_1to10_v_egfr_1to10.mageck.fdr")
+
+FC.p.combined <- merge(x=SP_cd19.10m_v_egfr.15m.gdata.toMerge2,y=SP_cd19.15m_v_egfr.15m.gdata.toMerge2, by.x=c("Gene"),by.y=c("Gene"), all=TRUE)
+FC.p.combined <- merge(x=FC.p.combined,y=BM_cd19.10m_v_egfr.15m.gdata.toMerge2, by.x=c("Gene"),by.y=c("Gene"), all=TRUE)
+FC.p.combined <- merge(x=FC.p.combined,y=BM_cd19.15m_v_egfr.15m.gdata.toMerge2, by.x=c("Gene"),by.y=c("Gene"), all=TRUE)
+FC.p.combined <- merge(x=FC.p.combined,y=cd19_1to2_v_egfr_1to2.gdata.toMerge2, by.x=c("Gene"),by.y=c("Gene"), all=TRUE)
+FC.p.combined <- merge(x=FC.p.combined,y=cd19_1to10_v_egfr_1to10.gdata.toMerge2, by.x=c("Gene"),by.y=c("Gene"), all=TRUE)
+```
+
+```{r}
+write.xlsx(FC.p.combined,file="FC.p.combined.xlsx", overwrite = TRUE, rowNames=TRUE)
+```
+
+# GSEA inside R using cluster profiler
+
+This code does not work well
+
+```{r}
+# rnk <- SP_cd19.15m_v_egfr.15m.gdata[order(-SP_cd19.15m_v_egfr.15m.gdata$Score),]
+# #gene_list <- rnk %>% dplyr::select(id,Score)
+# gene_list <- rnk$Score
+# names(gene_list) <- rnk$id
+# 
+# #gse <- gseGO(gene_list,
+# #             ont = "ALL",
+# #             OrgDb = "org.Mm.eg.db",
+# #             keyType = "SYMBOL",
+# #             eps = 1e-300,
+# #             pvalueCutoff = 0.1)
+# 
+# gse.k <- gseKEGG(gene_list,
+#              organism = "hsa",
+#              keyType = "SYMBOL",
+#              eps = 1e-300,
+#              pvalueCutoff = 0.1)
+```
+
+
+# Depmap test
+
+Not relevant here (yet)
+
+```{r}
+# depmap_similarity = ResembleDepmap(MPM_21_v_RPMI_21.gdata, symbol = "id", score = "Score")
+```
+
+# write session info
+
+```{r}
+sessionInfo()
+writeLines(capture.output(sessionInfo()), "mageck_sessionInfo.txt")
+```
